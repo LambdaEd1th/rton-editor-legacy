@@ -12,5 +12,5 @@ crate-type = ["cdylib"]
 [dependencies]
 console_error_panic_hook = "0.1"
 serde_json = "1.0"
-serde_rton = { path = "../../serde_rton" }
+serde_rton = { git = "https://github.com/LambdaEd1th/serde_rton.git", tag = "v0.3.2" }
 wasm-bindgen = "0.2"

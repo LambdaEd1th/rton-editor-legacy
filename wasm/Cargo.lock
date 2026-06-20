@@ -285,6 +285,7 @@ dependencies = [
 [[package]]
 name = "serde_rton"
 version = "0.3.2"
+source = "git+https://github.com/LambdaEd1th/serde_rton.git?tag=v0.3.2#41b2c04aef7cfffe3ded4df47ef670b31454f6f8"
 dependencies = [
  "byteorder",
  "hex",
