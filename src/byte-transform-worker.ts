@@ -1,24 +1,28 @@
-import init, { decrypt_rton_data, encrypt_rton_data } from './wasm/rton-editor/rton_editor_wasm';
+import { encodeRtonValueWire, type RtonValue } from './rton-value';
+import init, { encode_value_to_rton, encrypt_rton_data } from './wasm/rton-editor/rton_editor_wasm';
 
-type ByteTransformAction = 'encrypt' | 'decrypt';
+type ByteTransformTarget = {
+  compact: boolean;
+  encrypted: boolean;
+};
 
 type ByteTransformRequest = {
   id: number;
-  action: ByteTransformAction;
-  bytes: Uint8Array;
+  target: ByteTransformTarget;
+  value: RtonValue;
 };
 
 type ByteTransformResponse =
   | {
       id: number;
-      action: ByteTransformAction;
+      target: ByteTransformTarget;
       ok: true;
       bytes: Uint8Array;
       elapsedMs: number;
     }
   | {
       id: number;
-      action: ByteTransformAction;
+      target: ByteTransformTarget;
       ok: false;
       error: string;
     };
@@ -33,10 +37,11 @@ async function handleRequest(request: ByteTransformRequest) {
   try {
     await ensureWasmReady();
     const startedAt = performance.now();
-    const bytes = request.action === 'encrypt' ? encrypt_rton_data(request.bytes) : decrypt_rton_data(request.bytes);
+    const encoded = encode_value_to_rton(encodeRtonValueWire(request.value), request.target.compact);
+    const bytes = request.target.encrypted ? encrypt_rton_data(encoded) : encoded;
     const response: ByteTransformResponse = {
       id: request.id,
-      action: request.action,
+      target: request.target,
       ok: true,
       bytes,
       elapsedMs: performance.now() - startedAt,
@@ -45,7 +50,7 @@ async function handleRequest(request: ByteTransformRequest) {
   } catch (error) {
     const response: ByteTransformResponse = {
       id: request.id,
-      action: request.action,
+      target: request.target,
       ok: false,
       error: errorMessage(error),
     };

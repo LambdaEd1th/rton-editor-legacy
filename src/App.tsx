@@ -109,6 +109,7 @@ type EditorTab = {
   fileName: string;
   sourceBytes: Uint8Array | null;
   binaryBytes: Uint8Array | null;
+  binaryEncoding: RtonBinaryEncoding | null;
   currentValue: RtonValue | null;
   editorText: string;
   lastOutputBytes: number | null;
@@ -193,26 +194,29 @@ type FormatWorkerResponse =
       error: string;
     };
 
-type ByteTransformMode = 'encrypt' | 'decrypt';
+type RtonBinaryEncoding = {
+  compact: boolean;
+  encrypted: boolean;
+};
 
 type ByteTransformWorkerResponse =
   | {
       id: number;
-      action: ByteTransformMode;
+      target: RtonBinaryEncoding;
       ok: true;
       bytes: Uint8Array;
       elapsedMs: number;
     }
   | {
       id: number;
-      action: ByteTransformMode;
+      target: RtonBinaryEncoding;
       ok: false;
       error: string;
     };
 
 type ByteTransformState = {
   status: 'idle' | 'running' | 'ready' | 'error';
-  mode: ByteTransformMode | null;
+  target: RtonBinaryEncoding | null;
   bytes: Uint8Array | null;
   elapsedMs: number | null;
   error: string | null;
@@ -270,6 +274,7 @@ export function App() {
   const [fileName, setFileName] = useState('');
   const [sourceBytes, setSourceBytes] = useState<Uint8Array | null>(null);
   const [binaryBytes, setBinaryBytes] = useState<Uint8Array | null>(null);
+  const [binaryEncoding, setBinaryEncoding] = useState<RtonBinaryEncoding | null>(null);
   const [currentValue, setCurrentValue] = useState<RtonValue | null>(null);
   const [editorText, setEditorTextState] = useState('');
   const [editorJumpTarget, setEditorJumpTarget] = useState<EditorJumpTarget | null>(null);
@@ -293,10 +298,9 @@ export function App() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
   const [lineWrapping, setLineWrapping] = useState(() => readLineWrappingPreference());
   const [editorSearchPanelVisible, setEditorSearchPanelVisible] = useState(false);
-  const [byteTransformVisible, setByteTransformVisible] = useState(false);
   const [byteTransformState, setByteTransformState] = useState<ByteTransformState>({
     status: 'idle',
-    mode: null,
+    target: null,
     bytes: null,
     elapsedMs: null,
     error: null,
@@ -428,7 +432,7 @@ export function App() {
   const resetByteTransformState = useCallback(() => {
     setByteTransformState({
       status: 'idle',
-      mode: null,
+      target: null,
       bytes: null,
       elapsedMs: null,
       error: null,
@@ -453,20 +457,20 @@ export function App() {
         }
 
         if (response.ok) {
-          const label = byteTransformLabel(response.action);
+          const label = formatRtonEncoding(response.target);
           setByteTransformState({
             status: 'ready',
-            mode: response.action,
+            target: response.target,
             bytes: response.bytes,
             elapsedMs: response.elapsedMs,
             error: null,
           });
           updateStatus(`${label} Hex 已生成，用时 ${formatDuration(response.elapsedMs)}`, 'ok');
         } else {
-          const label = byteTransformLabel(response.action);
+          const label = formatRtonEncoding(response.target);
           setByteTransformState({
             status: 'error',
-            mode: response.action,
+            target: response.target,
             bytes: null,
             elapsedMs: null,
             error: response.error,
@@ -479,7 +483,7 @@ export function App() {
         const message = event instanceof ErrorEvent && event.message ? event.message : 'Hex 转换 worker 出错';
         setByteTransformState((current) => ({
           status: 'error',
-          mode: current.mode,
+          target: current.target,
           bytes: null,
           elapsedMs: null,
           error: message,
@@ -490,7 +494,7 @@ export function App() {
         const message = 'Hex 转换 worker 返回了无法读取的数据';
         setByteTransformState((current) => ({
           status: 'error',
-          mode: current.mode,
+          target: current.target,
           bytes: null,
           elapsedMs: null,
           error: message,
@@ -512,6 +516,7 @@ export function App() {
         fileName,
         sourceBytes,
         binaryBytes,
+        binaryEncoding,
         currentValue: currentValueRef.current,
         editorText,
         lastOutputBytes,
@@ -529,6 +534,7 @@ export function App() {
     [
       activeTabId,
       binaryBytes,
+      binaryEncoding,
       editorText,
       editorSurface,
       fileName,
@@ -554,6 +560,7 @@ export function App() {
       setFileName('');
       setSourceBytes(null);
       setBinaryBytes(null);
+      setBinaryEncoding(null);
       setCurrentValueState(null);
       setEditorTextState('');
       setEditorJumpTarget(null);
@@ -582,6 +589,7 @@ export function App() {
       setFileName(tab.fileName);
       setSourceBytes(tab.sourceBytes);
       setBinaryBytes(tab.binaryBytes);
+      setBinaryEncoding(tab.binaryEncoding);
       setCurrentValueState(tab.currentValue);
       setEditorTextState(tab.editorText);
       setEditorJumpTarget(null);
@@ -891,11 +899,46 @@ export function App() {
 	      } else {
 	        renderAlternateFormat(mode);
 	      }
-    },
-		    [activeTabId, editorSurface, invalidateFormatWork, parseError, renderAlternateFormat, renderTextForValue, updateStatus],
-		  );
+	    },
+			    [activeTabId, editorSurface, invalidateFormatWork, parseError, renderAlternateFormat, renderTextForValue, updateStatus],
+			  );
 
-  const validateValue = useCallback(() => {
+	  const hasActiveFile = activeTabId !== null && tabs.length > 0;
+	  const displayFileName = hasActiveFile ? fileName : EMPTY_FILE_NAME;
+	  const targetBinaryEncoding = useMemo<RtonBinaryEncoding>(
+	    () => ({ compact: compactOutput, encrypted: encryptOutput }),
+	    [compactOutput, encryptOutput],
+	  );
+	  const hexVariantNeeded =
+	    hasActiveFile &&
+	    editorSurface === 'hex' &&
+	    binaryBytes !== null &&
+	    binaryEncoding !== null &&
+	    !sameRtonEncoding(binaryEncoding, targetBinaryEncoding);
+	  const displayedHexBytes =
+	    hexVariantNeeded && byteTransformState.bytes && sameNullableRtonEncoding(byteTransformState.target, targetBinaryEncoding)
+	      ? byteTransformState.bytes
+	      : binaryBytes;
+	  const canGenerateHexVariant = hexVariantNeeded && wasmReady && currentValue !== null;
+	  const outputText = hasActiveFile
+	    ? editorSurface === 'hex' && binaryBytes
+	      ? `${formatBytes((displayedHexBytes ?? binaryBytes).byteLength)} · ${
+	          hexVariantNeeded ? formatRtonEncoding(targetBinaryEncoding) : 'raw bytes'
+	        }`
+	      : lastOutputBytes
+	      ? `${formatBytes(lastOutputBytes)} · ${compactOutput ? 'compact' : 'standard'}${encryptOutput ? ' · encrypted' : ''}`
+	      : '未生成'
+	    : '无';
+	  const displaySurfaceNote =
+	    editorSurface === 'hex'
+	      ? binaryBytes
+	        ? hexVariantNeeded
+	          ? `RTON · ${formatRtonEncoding(targetBinaryEncoding)}`
+	          : `RTON · ${formatBytes(binaryBytes.byteLength)}`
+	        : 'RTON 不可用'
+	      : surfaceNote;
+
+	  const validateValue = useCallback(() => {
     if (activeTabId === null) {
       updateStatus('请先打开文件', 'warn');
       return;
@@ -907,11 +950,14 @@ export function App() {
     }
 
     try {
-      if (editorSurface === 'hex' && binaryBytes) {
-        setLastOutputBytes(binaryBytes.byteLength);
-        updateStatus('二进制 RTON 可导出', 'ok');
-        return;
-      }
+	      if (editorSurface === 'hex' && binaryBytes) {
+	        const outputBytes = hexVariantNeeded
+	          ? byteTransformState.bytes ?? encodeCurrentRtonBytes(currentValueRef.current, compactOutput, encryptOutput, parseError)
+	          : binaryBytes;
+	        setLastOutputBytes(outputBytes.byteLength);
+	        updateStatus(`${formatRtonEncoding(targetBinaryEncoding)} RTON 可导出`, 'ok');
+	        return;
+	      }
 
       const value = currentValueRef.current;
       if (!value) {
@@ -923,7 +969,19 @@ export function App() {
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
-  }, [activeTabId, binaryBytes, compactOutput, editorSurface, encryptOutput, parseError, updateStatus, wasmReady]);
+	  }, [
+	    activeTabId,
+	    binaryBytes,
+	    byteTransformState.bytes,
+	    compactOutput,
+	    editorSurface,
+	    encryptOutput,
+	    hexVariantNeeded,
+	    parseError,
+	    targetBinaryEncoding,
+	    updateStatus,
+	    wasmReady,
+	  ]);
 
   const refreshOutputBytesForOptions = useCallback(
     (compact: boolean, encrypted: boolean) => {
@@ -981,11 +1039,18 @@ export function App() {
 
   useEffect(() => {
     if (activeTabId === null) {
+      setCompactOutput(false);
       setEncryptOutput(false);
       return;
     }
-    setEncryptOutput(sourceBytes !== null && isEncryptedRtonBytes(sourceBytes));
-  }, [activeTabId, sourceBytes]);
+	    if (binaryEncoding) {
+	      setCompactOutput(binaryEncoding.compact);
+	      setEncryptOutput(binaryEncoding.encrypted);
+	      return;
+	    }
+	    setCompactOutput(false);
+	    setEncryptOutput(false);
+	  }, [activeTabId, binaryEncoding]);
 
   useEffect(() => {
     void init()
@@ -1049,19 +1114,7 @@ export function App() {
     }, SEARCH_DEBOUNCE_MS);
   }, [activeTabId, currentValue, parseError, searchQuery]);
 
-  const hasActiveFile = activeTabId !== null && tabs.length > 0;
-  const displayFileName = hasActiveFile ? fileName : EMPTY_FILE_NAME;
-  const outputText = hasActiveFile
-    ? editorSurface === 'hex' && binaryBytes
-      ? `${formatBytes(binaryBytes.byteLength)} · raw bytes`
-      : lastOutputBytes
-      ? `${formatBytes(lastOutputBytes)} · ${compactOutput ? 'compact' : 'standard'}${encryptOutput ? ' · encrypted' : ''}`
-      : '未生成'
-    : '无';
-  const displayedHexBytes = byteTransformState.bytes ?? binaryBytes;
-  const canTransformBytes = hasActiveFile && wasmReady && editorSurface === 'hex' && binaryBytes !== null;
-  const displaySurfaceNote = editorSurface === 'hex' ? (binaryBytes ? `RTON · ${formatBytes(binaryBytes.byteLength)}` : 'RTON 不可用') : surfaceNote;
-  const loadedFileItems = useMemo(
+	  const loadedFileItems = useMemo(
     () => buildLoadedFileItems({ files: loadedFiles, tabs, activeTabId, fileName, sourceBytes, viewMode, editorSurface }),
     [activeTabId, editorSurface, fileName, loadedFiles, sourceBytes, tabs, viewMode],
   );
@@ -1086,40 +1139,38 @@ export function App() {
   } as CSSProperties;
 
   useEffect(() => {
-    if (!byteTransformVisible || !canTransformBytes || !binaryBytes) {
+    if (!canGenerateHexVariant || !currentValue) {
       terminateByteTransformWorker();
       resetByteTransformState();
       return;
     }
 
     terminateByteTransformWorker();
-    const mode: ByteTransformMode = isEncryptedRtonBytes(binaryBytes) ? 'decrypt' : 'encrypt';
     const requestId = byteTransformRequestId.current + 1;
     byteTransformRequestId.current = requestId;
+    const target = targetBinaryEncoding;
     setByteTransformState({
       status: 'running',
-      mode,
+      target,
       bytes: null,
       elapsedMs: null,
       error: null,
     });
-    updateStatus(`正在后台生成${byteTransformLabel(mode)} Hex`, 'warn');
+    updateStatus(`正在后台生成 ${formatRtonEncoding(target)} Hex`, 'warn');
 
-    const requestBytes = cloneUint8Array(binaryBytes);
     getByteTransformWorker().postMessage(
       {
         id: requestId,
-        action: mode,
-        bytes: requestBytes,
+        target,
+        value: currentValue,
       },
-      [requestBytes.buffer],
     );
   }, [
-    binaryBytes,
-    byteTransformVisible,
-    canTransformBytes,
+    canGenerateHexVariant,
+    currentValue,
     getByteTransformWorker,
     resetByteTransformState,
+    targetBinaryEncoding,
     terminateByteTransformWorker,
     updateStatus,
   ]);
@@ -1185,15 +1236,16 @@ export function App() {
     });
   }, []);
 
-  const onEditorInput = (value: string) => {
-    if (activeTabId === null) {
-      return;
-    }
-
-    setBinaryBytes(null);
-    setEditorTextState(value);
-    scheduleEditorParse(viewModeRef.current, value);
-  };
+	  const onEditorInput = (value: string) => {
+	    if (activeTabId === null) {
+	      return;
+	    }
+	
+	    setBinaryBytes(null);
+	    setBinaryEncoding(null);
+	    setEditorTextState(value);
+	    scheduleEditorParse(viewModeRef.current, value);
+	  };
 
   const openHexEditor = useCallback(() => {
     if (activeTabId === null) {
@@ -1214,9 +1266,10 @@ export function App() {
     }
 
     try {
-      const bytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
-      setBinaryBytes(bytes);
-      setSourceBytes(bytes);
+	      const bytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
+	      setBinaryBytes(bytes);
+	      setBinaryEncoding({ compact: compactOutput, encrypted: encryptOutput });
+	      setSourceBytes(bytes);
       setLastOutputBytes(null);
       setEditorSurface('hex');
       setSurfaceNote('RTON 可编辑');
@@ -1238,11 +1291,12 @@ export function App() {
       setLastOutputBytes(null);
 
       try {
-        const { value, encrypted } = decodeRtonSourceValue(nextBytes);
-        setCurrentValueState(value);
-        setParsedJson(rtonValueToJsonValue(value));
-        setParseError(null);
-        setStats(collectStats(value));
+	      const { value, encrypted, compact } = decodeRtonSourceValue(nextBytes);
+	      setCurrentValueState(value);
+	      setParsedJson(rtonValueToJsonValue(value));
+	      setParseError(null);
+	      setStats(collectStats(value));
+	      setBinaryEncoding({ compact, encrypted });
         setSearchState({ kind: 'idle' });
         renderTextForValue(value, viewModeRef.current);
         setSurfaceNote('RTON 可编辑');
@@ -1262,17 +1316,17 @@ export function App() {
     [activeTabId, clearPendingWork, invalidateFormatWork, renderTextForValue, setCurrentValueState, updateStatus],
   );
 
-  const onDisplayedHexBytesChange = useCallback(
-    (nextBytes: Uint8Array) => {
-      if (!byteTransformVisible) {
-        onHexBytesChange(nextBytes);
-        return;
-      }
-
-      updateStatus('转换 Hex 视图为只读，请关闭转换 Hex 后编辑原始 bytes', 'warn');
-    },
-    [byteTransformVisible, onHexBytesChange, updateStatus],
-  );
+	  const onDisplayedHexBytesChange = useCallback(
+	    (nextBytes: Uint8Array) => {
+	      if (!hexVariantNeeded) {
+	        onHexBytesChange(nextBytes);
+	        return;
+	      }
+	
+	      updateStatus('当前 Hex 是按 Compact/加密选项生成的只读预览，请切回原始形态后编辑 bytes', 'warn');
+	    },
+	    [hexVariantNeeded, onHexBytesChange, updateStatus],
+	  );
 
   const loadSample = () => {
     if (!wasmReady) {
@@ -1322,10 +1376,11 @@ export function App() {
             fileName: normalizeDisplayPath(entry.path),
             value: decoded.value,
             editorText: decoded.editorText,
-            surfaceNote: decoded.surfaceNote,
-            sourceBytes: decoded.sourceBytes,
-            binaryBytes: decoded.binaryBytes,
-            viewMode: decoded.viewMode,
+	            surfaceNote: decoded.surfaceNote,
+	            sourceBytes: decoded.sourceBytes,
+	            binaryBytes: decoded.binaryBytes,
+	            binaryEncoding: decoded.binaryEncoding,
+	            viewMode: decoded.viewMode,
             editorSurface: decoded.editorSurface,
             status: decoded.status,
           }),
@@ -1407,10 +1462,11 @@ export function App() {
           fileName: entry.path,
           value: decoded.value,
           editorText: decoded.editorText,
-          surfaceNote: decoded.surfaceNote,
-          sourceBytes: decoded.sourceBytes,
-          binaryBytes: decoded.binaryBytes,
-          viewMode: decoded.viewMode,
+	          surfaceNote: decoded.surfaceNote,
+	          sourceBytes: decoded.sourceBytes,
+	          binaryBytes: decoded.binaryBytes,
+	          binaryEncoding: decoded.binaryEncoding,
+	          viewMode: decoded.viewMode,
           editorSurface: decoded.editorSurface,
           status: decoded.status,
         });
@@ -1466,13 +1522,16 @@ export function App() {
       return;
     }
 
-    try {
-      if (editorSurface === 'hex' && binaryBytes) {
-        setLastOutputBytes(binaryBytes.byteLength);
-        downloadBytes(binaryBytes, outputBaseName(fileName, 'rton'));
-        updateStatus('二进制 RTON 已生成', 'ok');
-        return;
-      }
+	    try {
+	      if (editorSurface === 'hex' && binaryBytes) {
+	        const outputBytes = hexVariantNeeded
+	          ? byteTransformState.bytes ?? encodeCurrentRtonBytes(currentValueRef.current, compactOutput, encryptOutput, parseError)
+	          : binaryBytes;
+	        setLastOutputBytes(outputBytes.byteLength);
+	        downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
+	        updateStatus(`${formatRtonEncoding(targetBinaryEncoding)} RTON 已生成`, 'ok');
+	        return;
+	      }
 
       const value = currentValueRef.current;
       if (!value) {
@@ -1485,7 +1544,7 @@ export function App() {
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
-  };
+	  };
 
   const downloadJson = () => {
     if (activeTabId === null) {
@@ -1616,10 +1675,11 @@ export function App() {
         setCurrentValueState(updated);
         setParsedJson(rtonValueToJsonValue(updated));
         setParseError(null);
-        setStats(collectStats(updated));
-        setLastOutputBytes(null);
-        setBinaryBytes(null);
-        setEditorSurface('text');
+	        setStats(collectStats(updated));
+	        setLastOutputBytes(null);
+	        setBinaryBytes(null);
+	        setBinaryEncoding(null);
+	        setEditorSurface('text');
         const rendered = renderTextForValue(updated, viewModeRef.current);
         updateStatus(rendered ? 'RtonValue 已更新' : 'RtonValue 已更新，JSON 预览不可用', rendered ? 'ok' : 'warn');
       } catch (error) {
@@ -1637,10 +1697,10 @@ export function App() {
         return;
       }
 
-      if (editorSurface === 'hex') {
-        const navigableBytes = byteTransformState.mode === 'decrypt' && displayedHexBytes ? displayedHexBytes : binaryBytes;
-        if (!navigableBytes) {
-          updateStatus('当前没有可跳转的 RTON 字节', 'warn');
+	      if (editorSurface === 'hex') {
+	        const navigableBytes = displayedHexBytes ?? binaryBytes;
+	        if (!navigableBytes) {
+	          updateStatus('当前没有可跳转的 RTON 字节', 'warn');
           return;
         }
         if (isEncryptedRtonBytes(navigableBytes)) {
@@ -1677,8 +1737,8 @@ export function App() {
       nextEditorJumpId.current += 1;
       updateStatus(`已跳转到第 ${position.line.toLocaleString()} 行`, 'ok');
     },
-    [binaryBytes, byteTransformState.mode, displayedHexBytes, editorSurface, editorText, parseError, updateStatus],
-  );
+	    [binaryBytes, displayedHexBytes, editorSurface, editorText, parseError, updateStatus],
+	  );
 
   const toolbarGroups = {
     file: {
@@ -1803,18 +1863,7 @@ export function App() {
             <span className="rton-switch-label">加密</span>
             <span className="rton-switch-track" aria-hidden="true" />
           </label>
-          <label className="rton-switch">
-            <input
-              type="checkbox"
-              checked={byteTransformVisible && canTransformBytes}
-              disabled={!canTransformBytes}
-              className="rton-switch-input"
-              onChange={(event) => setByteTransformVisible(event.currentTarget.checked)}
-            />
-            <span className="rton-switch-label">转换 Hex</span>
-            <span className="rton-switch-track" aria-hidden="true" />
-          </label>
-          <button type="button" onClick={validateValue} disabled={!hasActiveFile || !wasmReady} className={buttonClass('secondary')}>
+	          <button type="button" onClick={validateValue} disabled={!hasActiveFile || !wasmReady} className={buttonClass('secondary')}>
             <CheckCircle2 />
             验证
           </button>
@@ -2004,11 +2053,11 @@ export function App() {
 
         <section className="rton-editor-stage">
           {hasActiveFile && editorSurface === 'hex' && displayedHexBytes ? (
-            <HexEditor
-              bytes={displayedHexBytes}
-              jumpTarget={hexJumpTarget}
-              readOnly={byteTransformVisible}
-              searchPanelVisible={editorSearchPanelVisible}
+	            <HexEditor
+	              bytes={displayedHexBytes}
+	              jumpTarget={hexJumpTarget}
+	              readOnly={hexVariantNeeded}
+	              searchPanelVisible={editorSearchPanelVisible}
               onChange={onDisplayedHexBytesChange}
               onSearchPanelVisibleChange={setEditorSearchPanelVisible}
             />
@@ -2043,22 +2092,22 @@ export function App() {
                 <MetaItem label="名称" value={displayFileName} />
                 <MetaItem label="输入" value={hasActiveFile ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : '文本') : '无'} />
                 <MetaItem label="输出" value={outputText} />
-                {byteTransformVisible && (
-                  <MetaItem
-                    label="Hex"
-                    value={
-                      byteTransformState.bytes
-                        ? `${byteTransformLabel(byteTransformState.mode ?? 'encrypt')} · ${formatBytes(byteTransformState.bytes.byteLength)}${
-                            byteTransformState.elapsedMs === null ? '' : ` · ${formatDuration(byteTransformState.elapsedMs)}`
-                          }`
-                        : byteTransformState.error
-                        ? `不可用：${byteTransformState.error}`
-                        : byteTransformState.status === 'running' && byteTransformState.mode
-                        ? `${byteTransformLabel(byteTransformState.mode)}生成中`
-                        : canTransformBytes
-                        ? '未生成'
-                        : '仅 RTON Hex 视图可用'
-                    }
+	                {hexVariantNeeded && (
+	                  <MetaItem
+	                    label="Hex"
+	                    value={
+	                      byteTransformState.bytes
+	                        ? `${formatRtonEncoding(byteTransformState.target ?? targetBinaryEncoding)} · ${formatBytes(byteTransformState.bytes.byteLength)}${
+	                            byteTransformState.elapsedMs === null ? '' : ` · ${formatDuration(byteTransformState.elapsedMs)}`
+	                          }`
+	                        : byteTransformState.error
+	                        ? `不可用：${byteTransformState.error}`
+	                        : byteTransformState.status === 'running' && byteTransformState.target
+	                        ? `${formatRtonEncoding(byteTransformState.target)} 生成中`
+	                        : canGenerateHexVariant
+	                        ? '未生成'
+	                        : '仅 RTON Hex 视图可用'
+	                    }
                   />
                 )}
               </dl>
@@ -4619,14 +4668,31 @@ function isEncryptedRtonBytes(bytes: Uint8Array) {
   return bytes.length >= 2 && bytes[0] === 0x10 && bytes[1] === 0x00;
 }
 
-function byteTransformLabel(mode: ByteTransformMode) {
-  return mode === 'decrypt' ? '解密后' : '加密后';
+function isCompactRtonBytes(bytes: Uint8Array) {
+  if (bytes.length < 9 || bytes[0] !== 0x52 || bytes[1] !== 0x54 || bytes[2] !== 0x4f || bytes[3] !== 0x4e) {
+    return false;
+  }
+  const versionHigh = bytes[6] | (bytes[7] << 8);
+  return versionHigh === 1 && bytes[8] === 0xb8;
 }
 
-function cloneUint8Array(bytes: Uint8Array) {
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return copy;
+function sameRtonEncoding(left: RtonBinaryEncoding, right: RtonBinaryEncoding) {
+  return left.compact === right.compact && left.encrypted === right.encrypted;
+}
+
+function sameNullableRtonEncoding(left: RtonBinaryEncoding | null, right: RtonBinaryEncoding) {
+  return left !== null && sameRtonEncoding(left, right);
+}
+
+function formatRtonEncoding(encoding: RtonBinaryEncoding) {
+  return `${encoding.compact ? 'Compact' : 'Standard'}${encoding.encrypted ? ' · 加密' : ''}`;
+}
+
+function encodeCurrentRtonBytes(value: RtonValue | null, compact: boolean, encrypted: boolean, parseError: string | null) {
+  if (!value) {
+    throw new Error(parseError ?? '当前内容还没有可用的 RTON Value');
+  }
+  return encodeRtonOutputBytes(value, compact, encrypted);
 }
 
 function parseJsonTextToRtonValue(json: string) {
@@ -4657,6 +4723,7 @@ function rtonValueToJsonValue(value: RtonValue) {
 function decodeRtonSourceValue(bytes: Uint8Array, renderJsonPreview = true) {
   const encrypted = isEncryptedRtonBytes(bytes);
   const plainBytes = encrypted ? decrypt_rton_data(bytes) : bytes;
+  const compact = isCompactRtonBytes(plainBytes);
   const wire = decode_rton_to_value(plainBytes);
   let editorText: string;
   let surfaceNote: string;
@@ -4676,9 +4743,10 @@ function decodeRtonSourceValue(bytes: Uint8Array, renderJsonPreview = true) {
   return {
     value: decodeRtonValueWire(wire),
     editorText,
-    surfaceNote,
-    encrypted,
-  };
+	    surfaceNote,
+	    compact,
+	    encrypted,
+	  };
 }
 
 async function decodeLoadableSource(
@@ -4689,7 +4757,8 @@ async function decodeLoadableSource(
   if (candidate.kind === 'rton') {
     const bytes = new Uint8Array(await candidate.file.arrayBuffer());
     const useHexSurface = preferredEditorSurface === 'hex';
-    const { value, encrypted } = decodeRtonSourceValue(bytes, false);
+	    const { value, encrypted, compact } = decodeRtonSourceValue(bytes, false);
+	    const binaryEncoding = { compact, encrypted };
     const label = loadableFileKindLabel(preferredViewMode);
     const editorText = useHexSurface ? '' : `正在后台生成 ${label} 预览...`;
     const textSurfaceNote = useHexSurface ? `${label} 未生成` : `正在生成 ${label} 预览`;
@@ -4698,9 +4767,10 @@ async function decodeLoadableSource(
         value,
         editorText,
         surfaceNote: useHexSurface ? 'RTON 可编辑' : textSurfaceNote,
-        sourceBytes: bytes,
-        binaryBytes: bytes,
-        viewMode: 'json' as const,
+	        sourceBytes: bytes,
+	        binaryBytes: bytes,
+	        binaryEncoding,
+	        viewMode: 'json' as const,
         editorSurface: useHexSurface ? ('hex' as const) : ('text' as const),
         status: { message: encrypted ? '加密 RTON 已解密并解析' : 'RTON 已解析', tone: 'ok' as const },
         needsTextPreview: !useHexSurface,
@@ -4721,9 +4791,10 @@ async function decodeLoadableSource(
       value,
       editorText: preferredEditorText,
       surfaceNote: useHexSurface ? 'RTON 可编辑' : preferredSurfaceNote,
-      sourceBytes: bytes,
-      binaryBytes: bytes,
-	      viewMode: preferredViewMode,
+	      sourceBytes: bytes,
+	      binaryBytes: bytes,
+	      binaryEncoding,
+		      viewMode: preferredViewMode,
 	      editorSurface: useHexSurface ? ('hex' as const) : ('text' as const),
 	      status: { message: encrypted ? '加密 RTON 已解密并解析' : 'RTON 已解析', tone: 'ok' as const },
 	      needsTextPreview: !useHexSurface,
@@ -4736,9 +4807,10 @@ async function decodeLoadableSource(
       value: parseJsonTextToRtonValue(text),
       editorText: text,
       surfaceNote: 'JSON 可编辑',
-      sourceBytes: null,
-      binaryBytes: null,
-      viewMode: 'json' as const,
+	      sourceBytes: null,
+	      binaryBytes: null,
+	      binaryEncoding: null,
+	      viewMode: 'json' as const,
       editorSurface: 'text' as const,
       status: { message: 'JSON 已解析', tone: 'ok' as const },
     };
@@ -4751,9 +4823,10 @@ async function decodeLoadableSource(
     value,
     editorText: text,
     surfaceNote: `${label} 可编辑`,
-    sourceBytes: null,
-    binaryBytes: null,
-    viewMode: candidate.kind,
+	    sourceBytes: null,
+	    binaryBytes: null,
+	    binaryEncoding: null,
+	    viewMode: candidate.kind,
     editorSurface: 'text' as const,
     status: { message: `${label} 已解析`, tone: 'ok' as const },
   };
@@ -5076,9 +5149,10 @@ function createEditorTabFromValue({
   value,
   editorText,
   surfaceNote,
-  sourceBytes,
-  binaryBytes,
-  viewMode = 'json',
+	  sourceBytes,
+	  binaryBytes,
+	  binaryEncoding,
+	  viewMode = 'json',
   editorSurface = 'text',
   status,
 }: {
@@ -5087,15 +5161,17 @@ function createEditorTabFromValue({
   value: RtonValue;
   editorText?: string;
   surfaceNote?: string;
-  sourceBytes: Uint8Array | null;
-  binaryBytes?: Uint8Array | null;
-  viewMode?: ViewMode;
+	  sourceBytes: Uint8Array | null;
+	  binaryBytes?: Uint8Array | null;
+	  binaryEncoding?: RtonBinaryEncoding | null;
+	  viewMode?: ViewMode;
   editorSurface?: EditorSurface;
   status: StatusState;
 }): EditorTab {
   try {
-    const plainValue = rtonValueToJsonValue(value);
-    let text = editorText;
+	    const plainValue = rtonValueToJsonValue(value);
+	    const actualBinaryBytes = binaryBytes ?? sourceBytes;
+	    let text = editorText;
     let note = surfaceNote ?? `${viewMode.toUpperCase()} 可编辑`;
     if (text === undefined) {
       try {
@@ -5108,37 +5184,40 @@ function createEditorTabFromValue({
 
     return {
       id,
-      fileName,
-      sourceBytes,
-      binaryBytes: binaryBytes ?? sourceBytes,
-      currentValue: value,
+	      fileName,
+	      sourceBytes,
+	      binaryBytes: actualBinaryBytes,
+	      binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+	      currentValue: value,
       editorText: text,
       lastOutputBytes: null,
       parsedJson: plainValue,
       parseError: null,
       stats: collectStats(value),
       viewMode,
-      editorSurface: editorSurface === 'hex' && (binaryBytes ?? sourceBytes) ? 'hex' : 'text',
+	      editorSurface: editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text',
       surfaceNote: note,
       searchQuery: '',
       searchState: { kind: 'idle' },
       status,
     };
   } catch (error) {
-    const message = errorMessage(error);
-    return {
+	    const message = errorMessage(error);
+	    const actualBinaryBytes = binaryBytes ?? sourceBytes;
+	    return {
       id,
-      fileName,
-      sourceBytes,
-      binaryBytes: binaryBytes ?? sourceBytes,
-      currentValue: value,
+	      fileName,
+	      sourceBytes,
+	      binaryBytes: actualBinaryBytes,
+	      binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+	      currentValue: value,
       editorText: editorText ?? '',
       lastOutputBytes: null,
       parsedJson: null,
       parseError: message,
       stats: emptyStats(),
       viewMode,
-      editorSurface: editorSurface === 'hex' && (binaryBytes ?? sourceBytes) ? 'hex' : 'text',
+	      editorSurface: editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text',
       surfaceNote: surfaceNote ?? `${viewMode.toUpperCase()} 解析失败`,
       searchQuery: '',
       searchState: { kind: 'message', message },
