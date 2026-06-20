@@ -1,6 +1,7 @@
 dist/
 node_modules/
+src/wasm/rton-editor/
 src/wasm-pkg/
-wasm/pkg/
 wasm/target/
+wasm/rton-editor-wasm/target/
 .DS_Store

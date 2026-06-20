@@ -1,4 +1,4 @@
-import init, { decrypt_rton_data, encrypt_rton_data } from './wasm-pkg/rton_editor_wasm';
+import init, { decrypt_rton_data, encrypt_rton_data } from './wasm/rton-editor/rton_editor_wasm';
 
 type ByteTransformAction = 'encrypt' | 'decrypt';
 

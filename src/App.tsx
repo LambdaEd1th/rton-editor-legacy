@@ -37,7 +37,7 @@ import init, {
   encrypt_rton_data,
   json_text_to_value,
   value_to_json_text,
-} from './wasm-pkg/rton_editor_wasm';
+} from './wasm/rton-editor/rton_editor_wasm';
 import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
 import { HexEditor, type HexEditorJumpTarget } from './components/HexEditor';
 import type { StructuredFormatMode } from './format-conversion';
