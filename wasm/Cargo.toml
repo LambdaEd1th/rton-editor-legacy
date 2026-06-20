@@ -1,0 +1,16 @@
+[package]
+name = "rton_editor_wasm"
+version = "0.1.0"
+edition = "2024"
+description = "wasm-bindgen bridge for the RTON editor"
+repository = "https://github.com/LambdaEd1th/serde_rton"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+console_error_panic_hook = "0.1"
+serde_json = "1.0"
+serde_rton = { path = "../../serde_rton" }
+wasm-bindgen = "0.2"
