@@ -233,10 +233,13 @@ const editorTheme = EditorView.theme(
       color: 'var(--color-text-strong)',
     },
     '.cm-searchMatch': {
-      backgroundColor: 'rgba(217, 164, 65, 0.28)',
+      borderRadius: '2px',
+      backgroundColor: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',
+      boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-accent) 28%, transparent) inset',
     },
     '.cm-searchMatch-selected': {
-      backgroundColor: 'rgba(217, 164, 65, 0.48)',
+      backgroundColor: 'color-mix(in srgb, var(--color-accent) 32%, transparent)',
+      boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-accent-border) 70%, transparent) inset',
     },
     '.cm-tooltip': {
       backgroundColor: 'var(--color-surface-raised)',
