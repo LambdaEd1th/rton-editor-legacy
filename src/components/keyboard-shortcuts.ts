@@ -41,6 +41,15 @@ export function registerEditorShortcutOwner(owner: EditorShortcutOwner) {
   };
 }
 
+export function runActiveEditorShortcut(kind: EditorShortcutKind) {
+  if (!activeEditorShortcutOwner) {
+    return false;
+  }
+
+  activeEditorShortcutOwner.handleShortcut(kind);
+  return true;
+}
+
 function hasPrimaryModifier(event: globalThis.KeyboardEvent) {
   return (event.metaKey || event.ctrlKey) && !event.altKey;
 }

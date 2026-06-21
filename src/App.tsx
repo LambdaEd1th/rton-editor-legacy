@@ -27,8 +27,10 @@ import {
   FolderOpen,
   GripVertical,
   ListTree,
+  Redo2,
   Search,
   Square,
+  Undo2,
 } from 'lucide-react';
 import init, {
   decode_rton_to_value,
@@ -52,6 +54,7 @@ import {
 } from './rton-value';
 import { sampleJson } from './sample';
 import { locateRtonValueOffset } from './rton-offset-map';
+import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
 
 type JsonScalar = string | number | boolean | null;
 type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
@@ -66,7 +69,7 @@ type StatusState = { message: string; tone: Tone };
 type PanelSide = 'left' | 'right';
 type DropPlacement = 'before' | 'after';
 type DropMarker<T extends string | number> = { id: T; placement: DropPlacement };
-type ToolbarGroupId = 'file' | 'format' | 'textExport' | 'rtonExport' | 'prefs';
+type ToolbarGroupId = 'file' | 'edit' | 'format' | 'textExport' | 'rtonExport' | 'prefs';
 type ToolbarRows = ToolbarGroupId[][];
 type ToolbarDropTarget =
   | { type: 'group'; id: ToolbarGroupId; placement: DropPlacement }
@@ -260,12 +263,12 @@ const TOOLBAR_LAYOUT_KEY = 'rton-editor-toolbar-layout';
 const THEME_PREFERENCE_KEY = 'rton-editor-theme-preference';
 const LINE_WRAPPING_PREFERENCE_KEY = 'rton-editor-line-wrapping';
 const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
-const TOOLBAR_GROUP_IDS: ToolbarGroupId[] = ['file', 'format', 'textExport', 'rtonExport', 'prefs'];
+const TOOLBAR_GROUP_IDS: ToolbarGroupId[] = ['file', 'edit', 'format', 'textExport', 'rtonExport', 'prefs'];
 const LOADABLE_FILE_ACCEPT =
   '.rton,.dat,.json,.yaml,.yml,.toml,application/octet-stream,application/json,application/yaml,text/yaml,application/toml,text/toml,text/plain';
 const LOADABLE_FILE_HINT = '.rton / .dat / .json / .yaml / .yml / .toml';
 const DEFAULT_TOOLBAR_ROWS: ToolbarRows = [
-  ['file', 'format'],
+  ['file', 'edit', 'format'],
   ['textExport', 'rtonExport', 'prefs'],
 ];
 
@@ -1696,8 +1699,21 @@ export function App() {
       nextEditorJumpId.current += 1;
       updateStatus(t('status.jumpedLine', { line: position.line.toLocaleString() }), 'ok');
     },
-	    [binaryBytes, displayedHexBytes, editorSurface, editorText, parseError, t, updateStatus],
-	  );
+    [binaryBytes, displayedHexBytes, editorSurface, editorText, parseError, t, updateStatus],
+  );
+
+  const runEditorToolbarAction = useCallback(
+    (kind: EditorShortcutKind) => {
+      if (!hasActiveFile) {
+        return;
+      }
+
+      if (!runActiveEditorShortcut(kind) && kind === 'find') {
+        setEditorSearchPanelVisible(true);
+      }
+    },
+    [hasActiveFile],
+  );
 
   const toolbarGroups = {
     file: {
@@ -1716,6 +1732,41 @@ export function App() {
             {t('toolbar.sample')}
           </button>
           <span className="min-w-24 max-w-80 flex-1 truncate px-1 font-semibold text-[var(--color-text-strong)]">{displayFileName}</span>
+        </>
+      ),
+    },
+    edit: {
+      label: t('toolbar.edit'),
+      ariaLabel: t('toolbar.edit'),
+      content: (
+        <>
+          <button
+            type="button"
+            onClick={() => runEditorToolbarAction('undo')}
+            disabled={!hasActiveFile}
+            className={buttonClass('secondary')}
+          >
+            <Undo2 />
+            {t('toolbar.undo')}
+          </button>
+          <button
+            type="button"
+            onClick={() => runEditorToolbarAction('redo')}
+            disabled={!hasActiveFile}
+            className={buttonClass('secondary')}
+          >
+            <Redo2 />
+            {t('toolbar.redo')}
+          </button>
+          <button
+            type="button"
+            onClick={() => runEditorToolbarAction('find')}
+            disabled={!hasActiveFile}
+            className={buttonClass('secondary')}
+          >
+            <Search />
+            {t('toolbar.find')}
+          </button>
         </>
       ),
     },
