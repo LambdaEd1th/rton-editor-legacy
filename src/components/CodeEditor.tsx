@@ -6,10 +6,11 @@ import { yaml } from '@codemirror/lang-yaml';
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import { closeSearchPanel, openSearchPanel, searchPanelOpen as isSearchPanelOpen } from '@codemirror/search';
-import { Compartment, Prec, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
 import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { registerEditorShortcutOwner } from './keyboard-shortcuts';
+import { useI18n } from '../localization/use-i18n';
 
 type EditorMode = 'json' | 'yaml' | 'toml';
 
@@ -288,6 +289,7 @@ export function CodeEditor({
   onChange,
   onSearchPanelVisibleChange,
 }: CodeEditorProps) {
+  const { lang } = useI18n();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -296,6 +298,7 @@ export function CodeEditor({
   const searchPanelVisibleRef = useRef(searchPanelVisible);
   const languageCompartment = useRef(new Compartment());
   const lineWrappingCompartment = useRef(new Compartment());
+  const phrasesCompartment = useRef(new Compartment());
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -336,6 +339,7 @@ export function CodeEditor({
         syntaxHighlighting(rtonHighlightStyle),
         languageCompartment.current.of(languageExtension(mode)),
         lineWrappingCompartment.current.of(lineWrappingExtension(lineWrapping)),
+        phrasesCompartment.current.of(EditorState.phrases.of(codeMirrorPhrases(lang))),
         EditorView.contentAttributes.of({ 'aria-label': `${mode.toUpperCase()} editor` }),
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged && !applyingExternalChange.current) {
@@ -441,6 +445,25 @@ export function CodeEditor({
       return;
     }
 
+    const searchPanelWasOpen = isSearchPanelOpen(view.state);
+    view.dispatch({
+      effects: phrasesCompartment.current.reconfigure(EditorState.phrases.of(codeMirrorPhrases(lang))),
+    });
+
+    if (searchPanelWasOpen) {
+      closeSearchPanel(view);
+      openSearchPanel(view);
+      searchPanelVisibleRef.current = true;
+      onSearchPanelVisibleChangeRef.current(true);
+    }
+  }, [lang]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
     searchPanelVisibleRef.current = searchPanelVisible;
     const currentSearchPanelVisible = isSearchPanelOpen(view.state);
     if (currentSearchPanelVisible === searchPanelVisible) {
@@ -494,3 +517,32 @@ function languageExtension(mode: EditorMode): Extension {
 function lineWrappingExtension(enabled: boolean): Extension {
   return enabled ? EditorView.lineWrapping : [];
 }
+
+function codeMirrorPhrases(lang: string): Record<string, string> {
+  if (lang !== 'zh-CN') {
+    return CODE_MIRROR_EN_PHRASES;
+  }
+  return CODE_MIRROR_ZH_CN_PHRASES;
+}
+
+const CODE_MIRROR_EN_PHRASES: Record<string, string> = {};
+
+const CODE_MIRROR_ZH_CN_PHRASES: Record<string, string> = {
+  Find: '查找',
+  Replace: '替换',
+  next: '下一个',
+  previous: '上一个',
+  all: '全选',
+  'match case': '区分大小写',
+  regexp: '正则',
+  'by word': '整词',
+  replace: '替换',
+  'replace all': '全部替换',
+  close: '关闭',
+  'current match': '当前匹配',
+  'on line': '位于第',
+  'Go to line': '转到行',
+  go: '转到',
+  'replaced match on line $': '已替换第 $ 行的匹配',
+  'replaced $ matches': '已替换 $ 个匹配',
+};
