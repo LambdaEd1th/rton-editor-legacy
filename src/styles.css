@@ -893,6 +893,17 @@ summary {
   background: var(--color-control);
 }
 
+.rton-hex-byte.is-block-selected {
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  color: var(--color-accent-text);
+}
+
+.rton-hex-byte.is-block-selected.is-selected {
+  border-color: var(--color-accent-border);
+  background: color-mix(in srgb, var(--color-accent) 30%, var(--color-control));
+}
+
 .rton-hex-byte:focus {
   border-color: var(--color-accent-border);
   background: var(--color-control-hover);
@@ -951,6 +962,15 @@ summary {
 .rton-hex-ascii-char.is-selected {
   background: var(--color-control);
   color: var(--color-accent-text);
+}
+
+.rton-hex-ascii-char.is-block-selected {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  color: var(--color-accent-text);
+}
+
+.rton-hex-ascii-char.is-block-selected.is-selected {
+  background: color-mix(in srgb, var(--color-accent) 34%, var(--color-control));
 }
 
 .rton-hex-ascii-char:focus {
