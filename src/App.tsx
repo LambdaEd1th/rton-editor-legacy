@@ -57,12 +57,26 @@ import {
 } from './rton-value-editing';
 import { locateRtonPathInText } from './rton-text-locator';
 import { collectStats, emptyStats, RTON_SEARCH_MATCH_LIMIT, runChunkedSearch, type Stats } from './rton-value-analysis';
+import {
+  collectDirectoryEntries,
+  collectDroppedEntries,
+  collectLoadableCandidates,
+  displayFilePath,
+  LOADABLE_FILE_ACCEPT,
+  LOADABLE_FILE_HINT,
+  loadableFileKindLabel,
+  normalizeDisplayPath,
+  splitDisplayPath,
+  type DirectoryPickerWindow,
+  type LoadableFileCandidate,
+  type LoadableFileKind,
+  type RtonLoadEntry,
+} from './file-loading';
 
 type JsonScalar = string | number | boolean | null;
 type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
 type ViewMode = 'json' | 'yaml' | 'toml';
 type EditorSurface = 'text' | 'hex';
-type LoadableFileKind = 'rton' | ViewMode;
 type BatchExportMode = 'rton' | 'json' | 'yaml' | 'toml';
 type ThemePreference = 'system' | 'light' | 'dark';
 type StructuredFormatter = (value: RtonValue, mode: StructuredFormatMode) => string;
@@ -89,20 +103,6 @@ type EditorTab = {
   status: StatusState;
 };
 
-type RtonLoadEntry = {
-  file: File;
-  path: string;
-};
-
-type LoadableFileCandidate = RtonLoadEntry & {
-  kind: LoadableFileKind;
-};
-
-type DroppedRtonEntries = {
-  entries: RtonLoadEntry[];
-  containsDirectory: boolean;
-};
-
 type LoadedRtonFile = {
   id: number;
   file: File;
@@ -114,10 +114,6 @@ type LoadedRtonFile = {
 type ZipFileEntry = {
   path: string;
   bytes: Uint8Array;
-};
-
-type DirectoryPickerWindow = Window & {
-  showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>;
 };
 
 type FormatWorkerResponse =
@@ -200,10 +196,6 @@ const PANEL_MAX_WIDTH = 560;
 const THEME_PREFERENCE_KEY = 'rton-editor-theme-preference';
 const LINE_WRAPPING_PREFERENCE_KEY = 'rton-editor-line-wrapping';
 const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
-const LOADABLE_FILE_ACCEPT =
-  '.rton,.dat,.json,.yaml,.yml,.toml,application/octet-stream,application/json,application/yaml,text/yaml,application/toml,text/toml,text/plain';
-const LOADABLE_FILE_HINT = '.rton / .dat / .json / .yaml / .yml / .toml';
-
 const buttonBase =
   'inline-flex h-7 min-w-0 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded border px-2.5 text-[13px] leading-none transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45';
 
@@ -2173,18 +2165,6 @@ function outputBaseName(fileName: string, extension: string) {
   return `${base}.${extension}`;
 }
 
-function displayFilePath(file: File) {
-  return normalizeDisplayPath(file.webkitRelativePath || file.name) || file.name;
-}
-
-function normalizeDisplayPath(path: string) {
-  return path.replace(/\\/g, '/').replace(/^\/+/, '');
-}
-
-function splitDisplayPath(path: string) {
-  return normalizeDisplayPath(path).split('/').filter(Boolean);
-}
-
 function buildLoadedFileItems({
   files,
   tabs,
@@ -2258,85 +2238,6 @@ function filterLoadedFileItems(items: LoadedFileTreeItem[], query: string) {
     const haystack = `${item.path}\n${item.name}\n${item.detail}`.toLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
-}
-
-async function collectDirectoryEntries(directoryHandle: FileSystemDirectoryHandle, parentPath = ''): Promise<RtonLoadEntry[]> {
-  const entries: RtonLoadEntry[] = [];
-  for await (const [name, child] of directoryHandle.entries()) {
-    const path = parentPath ? `${parentPath}/${name}` : name;
-    if (child.kind === 'file') {
-      entries.push({ file: await child.getFile(), path });
-    } else {
-      entries.push(...await collectDirectoryEntries(child, path));
-    }
-  }
-  return entries;
-}
-
-async function collectDroppedEntries(dataTransfer: DataTransfer): Promise<DroppedRtonEntries> {
-  const rootEntries = Array.from(dataTransfer.items)
-    .filter((item) => item.kind === 'file')
-    .map((item) => item.webkitGetAsEntry())
-    .filter((entry): entry is FileSystemEntry => Boolean(entry));
-
-  if (rootEntries.length > 0) {
-    const nested = await Promise.all(rootEntries.map((entry) => collectFileSystemEntry(entry)));
-    return {
-      entries: nested.flat(),
-      containsDirectory: rootEntries.some((entry) => entry.isDirectory),
-    };
-  }
-
-  return {
-    entries: Array.from(dataTransfer.files).map((file) => ({ file, path: displayFilePath(file) })),
-    containsDirectory: false,
-  };
-}
-
-async function collectFileSystemEntry(entry: FileSystemEntry, parentPath = ''): Promise<RtonLoadEntry[]> {
-  const path = parentPath ? `${parentPath}/${entry.name}` : entry.name;
-  if (entry.isFile) {
-    return [{ file: await readFileEntry(entry as FileSystemFileEntry), path }];
-  }
-
-  const childEntries = await readAllDirectoryEntries((entry as FileSystemDirectoryEntry).createReader());
-  const nested = await Promise.all(childEntries.map((child) => collectFileSystemEntry(child, path)));
-  return nested.flat();
-}
-
-function readFileEntry(entry: FileSystemFileEntry): Promise<File> {
-  return new Promise((resolve, reject) => entry.file(resolve, reject));
-}
-
-async function readAllDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
-  const entries: FileSystemEntry[] = [];
-  while (true) {
-    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
-    if (batch.length === 0) {
-      return entries;
-    }
-    entries.push(...batch);
-  }
-}
-
-function detectLoadableFileKind(file: File, allowFallback: boolean): LoadableFileKind | null {
-  if (/\.(?:rton|dat)$/i.test(file.name)) {
-    return 'rton';
-  }
-  if (/\.json$/i.test(file.name)) {
-    return 'json';
-  }
-  if (/\.ya?ml$/i.test(file.name)) {
-    return 'yaml';
-  }
-  if (/\.toml$/i.test(file.name)) {
-    return 'toml';
-  }
-  return allowFallback ? 'rton' : null;
-}
-
-function loadableFileKindLabel(kind: LoadableFileKind) {
-  return kind.toUpperCase();
 }
 
 function isEncryptedRtonBytes(bytes: Uint8Array) {
@@ -2500,14 +2401,6 @@ async function decodeLoadableSource(
     editorSurface: 'text' as const,
     status: { message: t('format.parsed', { label }), tone: 'ok' as const },
   };
-}
-
-function collectLoadableCandidates(entries: RtonLoadEntry[], allowSingleFallback: boolean): LoadableFileCandidate[] {
-  const allowFallback = allowSingleFallback && entries.length === 1;
-  return entries.flatMap((entry) => {
-    const kind = detectLoadableFileKind(entry.file, allowFallback);
-    return kind ? [{ ...entry, kind }] : [];
-  });
 }
 
 function clampPanelWidth(width: number) {
