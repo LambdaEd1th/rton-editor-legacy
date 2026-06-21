@@ -7,9 +7,11 @@ import {
   type ClipboardEvent,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
 import { useI18n } from '../localization/use-i18n';
 import type { Translator } from '../localization/i18n';
+import { inspectRtonByte, type RtonByteInspection } from '../rton-byte-inspector';
 
 type PendingHexEdit = {
   offset: number;
@@ -92,6 +94,7 @@ export function HexEditor({
   const offsetColumnWidth = Math.max(8, Math.max(0, bytes.length - 1).toString(16).length) + 2;
   const searchPattern = useMemo(() => parseSearchPattern(searchMode, searchQuery, t), [lang, searchMode, searchQuery, t]);
   const replacePattern = useMemo(() => parseReplacePattern(searchMode, replaceQuery, t), [lang, replaceQuery, searchMode, t]);
+  const byteInspection = useMemo(() => inspectRtonByte(bytes, selectedOffset), [bytes, selectedOffset]);
   const currentSearchMatch = useMemo(
     () => searchMatches.matches.find((match) => selectedOffset >= match.offset && selectedOffset < match.offset + match.length) ?? null,
     [searchMatches.matches, selectedOffset],
@@ -899,123 +902,134 @@ export function HexEditor({
           {readOnly ? t('hex.readOnly') : insertMode ? t('hex.insert') : t('hex.overwrite')}
         </button>
       </div>
-      <div className="rton-hex-header" aria-hidden="true">
-        <span className="rton-hex-offset">OFFSET</span>
-        <div className="rton-hex-grid">
-          {headerCells.map((label) => (
-            <span key={label} className="rton-hex-column-label">
-              {label}
-            </span>
-          ))}
-        </div>
-        <span className="rton-hex-ascii-label">ASCII</span>
-      </div>
-      <div
-        ref={scrollerRef}
-        className="rton-hex-scroll"
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-      >
-        <div className="rton-hex-virtual-space" style={{ height: virtualContentHeight }}>
-          {rows.map((rowIndex) => {
-            const rowStart = rowIndex * bytesPerRow;
-            const rowTop = scrollScale === 1 ? rowIndex * ROW_HEIGHT : scrollTop + rowIndex * ROW_HEIGHT - logicalScrollTop;
-            const rowBytes = Array.from({ length: bytesPerRow }, (_, column) => rowStart + column);
-            return (
-              <div key={rowIndex} className="rton-hex-row" style={{ transform: `translateY(${rowTop}px)` }}>
-                <span className="rton-hex-offset">{toOffsetHex(rowStart, offsetColumnWidth - 2)}</span>
-                <div className="rton-hex-grid">
-                  {rowBytes.map((offset) => {
-                    if (offset >= bytes.length) {
-                      return <span key={offset} className="rton-hex-byte-placeholder" />;
-                    }
+      <div className="rton-hex-body">
+        <div className="rton-hex-table-pane">
+          <div className="rton-hex-header" aria-hidden="true">
+            <span className="rton-hex-offset">OFFSET</span>
+            <div className="rton-hex-grid">
+              {headerCells.map((label) => (
+                <span key={label} className="rton-hex-column-label">
+                  {label}
+                </span>
+              ))}
+            </div>
+            <span className="rton-hex-ascii-label">ASCII</span>
+          </div>
+          <div
+            ref={scrollerRef}
+            className="rton-hex-scroll"
+            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          >
+            <div className="rton-hex-virtual-space" style={{ height: virtualContentHeight }}>
+              {rows.map((rowIndex) => {
+                const rowStart = rowIndex * bytesPerRow;
+                const rowTop = scrollScale === 1 ? rowIndex * ROW_HEIGHT : scrollTop + rowIndex * ROW_HEIGHT - logicalScrollTop;
+                const rowBytes = Array.from({ length: bytesPerRow }, (_, column) => rowStart + column);
+                return (
+                  <div key={rowIndex} className="rton-hex-row" style={{ transform: `translateY(${rowTop}px)` }}>
+                    <button
+                      type="button"
+                      className="rton-hex-offset rton-hex-offset-button"
+                      onClick={() => focusOffset(rowStart)}
+                    >
+                      {toOffsetHex(rowStart, offsetColumnWidth - 2)}
+                    </button>
+                    <div className="rton-hex-grid">
+                      {rowBytes.map((offset) => {
+                        if (offset >= bytes.length) {
+                          return <span key={offset} className="rton-hex-byte-placeholder" />;
+                        }
 
-                    const pendingText = pendingEdit?.offset === offset ? pendingEdit.text : null;
-                    const searchMatch = findContainingMatch(searchMatches.matches, offset);
-                    const isCurrentSearchMatch =
-                      currentSearchMatch !== null &&
-                      offset >= currentSearchMatch.offset &&
-                      offset < currentSearchMatch.offset + currentSearchMatch.length;
-                    return (
-                      <input
-                        key={offset}
-                        ref={(node) => {
-                          if (node) {
-                            hexInputRefs.current.set(offset, node);
-                          } else {
-                            hexInputRefs.current.delete(offset);
-                          }
-                        }}
-                        value={pendingText ?? byteToHex(bytes[offset])}
-                        aria-label={`Byte ${toOffsetHex(offset, offsetColumnWidth - 2)}`}
-                        className={classNames(
-                          'rton-hex-byte',
-                          selectedOffset === offset && 'is-selected',
-                          searchMatch && 'is-search-match',
-                          isCurrentSearchMatch && 'is-current-match',
-                        )}
-                        inputMode="text"
-                        readOnly={readOnly}
-                        spellCheck={false}
-                        onFocus={(event) => {
-                          activePane.current = 'hex';
-                          setSelectedOffset(offset);
-                          event.currentTarget.select();
-                        }}
-                        onChange={(event) => handleTextChange(offset, event.currentTarget.value)}
-                        onBlur={() => commitPendingEdit(offset)}
-                        onKeyDown={(event) => handleKeyDown(event, offset)}
-                        onPaste={(event) => handlePaste(event, offset)}
-                      />
-                    );
-                  })}
-                </div>
-                <div className="rton-hex-ascii">
-                  {rowBytes.map((offset) => {
-                    if (offset >= bytes.length) {
-                      return <span key={offset} className="rton-hex-ascii-placeholder" />;
-                    }
-                    const searchMatch = findContainingMatch(searchMatches.matches, offset);
-                    const isCurrentSearchMatch =
-                      currentSearchMatch !== null &&
-                      offset >= currentSearchMatch.offset &&
-                      offset < currentSearchMatch.offset + currentSearchMatch.length;
-                    return (
-                      <input
-                        key={offset}
-                        ref={(node) => {
-                          if (node) {
-                            asciiInputRefs.current.set(offset, node);
-                          } else {
-                            asciiInputRefs.current.delete(offset);
-                          }
-                        }}
-                        value={byteToAscii(bytes[offset])}
-                        aria-label={`ASCII byte ${toOffsetHex(offset, offsetColumnWidth - 2)}`}
-                        className={classNames(
-                          'rton-hex-ascii-char',
-                          selectedOffset === offset && 'is-selected',
-                          searchMatch && 'is-search-match',
-                          isCurrentSearchMatch && 'is-current-match',
-                        )}
-                        inputMode="text"
-                        readOnly={readOnly}
-                        spellCheck={false}
-                        onFocus={(event) => {
-                          activePane.current = 'ascii';
-                          setSelectedOffset(offset);
-                          event.currentTarget.select();
-                        }}
-                        onChange={(event) => handleAsciiChange(offset, event.currentTarget.value)}
-                        onKeyDown={(event) => handleAsciiKeyDown(event, offset)}
-                        onPaste={(event) => handleAsciiPaste(event, offset)}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+                        const pendingText = pendingEdit?.offset === offset ? pendingEdit.text : null;
+                        const searchMatch = findContainingMatch(searchMatches.matches, offset);
+                        const isCurrentSearchMatch =
+                          currentSearchMatch !== null &&
+                          offset >= currentSearchMatch.offset &&
+                          offset < currentSearchMatch.offset + currentSearchMatch.length;
+                        return (
+                          <input
+                            key={offset}
+                            ref={(node) => {
+                              if (node) {
+                                hexInputRefs.current.set(offset, node);
+                              } else {
+                                hexInputRefs.current.delete(offset);
+                              }
+                            }}
+                            value={pendingText ?? byteToHex(bytes[offset])}
+                            aria-label={`Byte ${toOffsetHex(offset, offsetColumnWidth - 2)}`}
+                            className={classNames(
+                              'rton-hex-byte',
+                              selectedOffset === offset && 'is-selected',
+                              searchMatch && 'is-search-match',
+                              isCurrentSearchMatch && 'is-current-match',
+                            )}
+                            inputMode="text"
+                            readOnly={readOnly}
+                            spellCheck={false}
+                            onFocus={(event) => {
+                              activePane.current = 'hex';
+                              setSelectedOffset(offset);
+                              event.currentTarget.select();
+                            }}
+                            onChange={(event) => handleTextChange(offset, event.currentTarget.value)}
+                            onBlur={() => commitPendingEdit(offset)}
+                            onKeyDown={(event) => handleKeyDown(event, offset)}
+                            onPaste={(event) => handlePaste(event, offset)}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="rton-hex-ascii">
+                      {rowBytes.map((offset) => {
+                        if (offset >= bytes.length) {
+                          return <span key={offset} className="rton-hex-ascii-placeholder" />;
+                        }
+                        const searchMatch = findContainingMatch(searchMatches.matches, offset);
+                        const isCurrentSearchMatch =
+                          currentSearchMatch !== null &&
+                          offset >= currentSearchMatch.offset &&
+                          offset < currentSearchMatch.offset + currentSearchMatch.length;
+                        return (
+                          <input
+                            key={offset}
+                            ref={(node) => {
+                              if (node) {
+                                asciiInputRefs.current.set(offset, node);
+                              } else {
+                                asciiInputRefs.current.delete(offset);
+                              }
+                            }}
+                            value={byteToAscii(bytes[offset])}
+                            aria-label={`ASCII byte ${toOffsetHex(offset, offsetColumnWidth - 2)}`}
+                            className={classNames(
+                              'rton-hex-ascii-char',
+                              selectedOffset === offset && 'is-selected',
+                              searchMatch && 'is-search-match',
+                              isCurrentSearchMatch && 'is-current-match',
+                            )}
+                            inputMode="text"
+                            readOnly={readOnly}
+                            spellCheck={false}
+                            onFocus={(event) => {
+                              activePane.current = 'ascii';
+                              setSelectedOffset(offset);
+                              event.currentTarget.select();
+                            }}
+                            onChange={(event) => handleAsciiChange(offset, event.currentTarget.value)}
+                            onKeyDown={(event) => handleAsciiKeyDown(event, offset)}
+                            onPaste={(event) => handleAsciiPaste(event, offset)}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
+        <HexByteInspector inspection={byteInspection} />
       </div>
       {searchPanelVisible && (
         <div className="rton-hex-search-panel">
@@ -1101,6 +1115,145 @@ export function HexEditor({
       )}
     </div>
   );
+}
+
+function HexByteInspector({ inspection }: { inspection: RtonByteInspection | null }) {
+  const { t } = useI18n();
+
+  if (!inspection) {
+    return (
+      <aside className="rton-hex-inspector">
+        <div className="rton-hex-inspector-empty">{t('hexInspector.empty')}</div>
+      </aside>
+    );
+  }
+
+  const stringInfo = inspection.stringInfo;
+  const tableScan = inspection.tableScan;
+
+  return (
+    <aside className="rton-hex-inspector">
+      <header className="rton-hex-inspector-header">
+        <h2>{t('hexInspector.title')}</h2>
+        <span>{formatInspectorOffset(inspection.offset)}</span>
+      </header>
+
+      <InspectorSection>
+        <InspectorRow label={t('hexInspector.offset')} value={formatInspectorOffset(inspection.offset)} />
+        <InspectorRow label={t('hexInspector.byte')} value={`0x${inspection.byteHex}`} />
+        <InspectorRow label={t('hexInspector.decimal')} value={inspection.byte.toString()} />
+        <InspectorRow label={t('hexInspector.ascii')} value={inspection.ascii} />
+        {inspection.special && <InspectorRow label={t('hexInspector.region')} value={inspection.special.label} />}
+      </InspectorSection>
+
+      <InspectorSection title={t('hexInspector.tag')}>
+        {inspection.tag ? (
+          <>
+            <InspectorRow label={t('hexInspector.tag')} value={`${inspection.tag.name} · 0x${inspection.tag.hex}`} strong />
+            <InspectorRow label={t('hexInspector.category')} value={inspection.tag.category} />
+            <InspectorRow label={t('hexInspector.payloadKind')} value={inspection.tag.payloadKind} />
+          </>
+        ) : (
+          <p className="rton-hex-inspector-note">{t('hexInspector.unknownTag')}</p>
+        )}
+      </InspectorSection>
+
+      {inspection.payload && (
+        <InspectorSection title={t('hexInspector.payload')}>
+          <InspectorRow label={inspection.payload.label} value={inspection.payload.value} strong />
+          {inspection.payload.bytes && <InspectorRow label={t('hexInspector.bytes')} value={inspection.payload.bytes} />}
+          {inspection.payload.range && <InspectorRow label={t('hexInspector.range')} value={inspection.payload.range} />}
+        </InspectorSection>
+      )}
+
+      {inspection.varint && (
+        <InspectorSection title={t('hexInspector.varint')}>
+          <InspectorRow label={t('hexInspector.unsigned')} value={inspection.varint.value} strong />
+          <InspectorRow label={t('hexInspector.zigzag')} value={inspection.varint.zigzag} />
+          <InspectorRow label={t('hexInspector.length')} value={`${inspection.varint.length} ${t('hexInspector.bytes')}`} />
+          <InspectorRow label={t('hexInspector.bytes')} value={inspection.varint.bytes} />
+          <InspectorRow label={t('hexInspector.nextOffset')} value={formatInspectorOffset(inspection.varint.nextOffset)} />
+        </InspectorSection>
+      )}
+
+      {(stringInfo || tableScan) && (
+        <InspectorSection title={t('hexInspector.stringTable')}>
+          {stringInfo && (
+            <>
+              <InspectorRow label={t('hexInspector.mode')} value={stringModeLabel(stringInfo.mode, t)} />
+              <InspectorRow label={t('hexInspector.encoding')} value={stringInfo.encoding} />
+              {stringInfo.table && <InspectorRow label={t('hexInspector.table')} value={stringInfo.table} />}
+              {stringInfo.index && <InspectorRow label={t('hexInspector.index')} value={stringInfo.index} strong />}
+              {stringInfo.length && <InspectorRow label={t('hexInspector.length')} value={stringInfo.length} />}
+              {stringInfo.byteLength && <InspectorRow label={t('hexInspector.bytes')} value={stringInfo.byteLength} />}
+              {stringInfo.text && <InspectorRow label={t('hexInspector.text')} value={stringInfo.text} />}
+              {stringInfo.resolvedText && <InspectorRow label={t('hexInspector.resolved')} value={stringInfo.resolvedText} strong />}
+              {stringInfo.scanLimited && <p className="rton-hex-inspector-note">{t('hexInspector.scanLimited')}</p>}
+              {stringInfo.scanError && <p className="rton-hex-inspector-note">{t('hexInspector.scanError', { message: stringInfo.scanError })}</p>}
+            </>
+          )}
+          {tableScan && !tableScan.limited && (
+            <InspectorRow
+              label={t('hexInspector.tableCounts')}
+              value={`ASCII ${tableScan.asciiCount ?? 0} · UTF-8 ${tableScan.utf8Count ?? 0}`}
+            />
+          )}
+          {tableScan?.limited && <p className="rton-hex-inspector-note">{t('hexInspector.scanLimited')}</p>}
+          {tableScan?.error && <p className="rton-hex-inspector-note">{t('hexInspector.scanError', { message: tableScan.error })}</p>}
+        </InspectorSection>
+      )}
+
+      {inspection.asciiRun && (
+        <InspectorSection title={t('hexInspector.asciiRun')}>
+          <InspectorRow
+            label={t('hexInspector.range')}
+            value={`${formatInspectorOffset(inspection.asciiRun.start)}..${formatInspectorOffset(inspection.asciiRun.end)}`}
+          />
+          <div className="rton-hex-inspector-preview">{inspection.asciiRun.text}</div>
+        </InspectorSection>
+      )}
+    </aside>
+  );
+}
+
+function InspectorSection({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <section className="rton-hex-inspector-section">
+      {title && <h3>{title}</h3>}
+      {children}
+    </section>
+  );
+}
+
+function InspectorRow({
+  label,
+  value,
+  strong = false,
+}: {
+  label: string;
+  value: ReactNode;
+  strong?: boolean;
+}) {
+  return (
+    <div className="rton-hex-inspector-row">
+      <span>{label}</span>
+      <strong className={strong ? 'is-strong' : undefined}>{value}</strong>
+    </div>
+  );
+}
+
+function stringModeLabel(mode: NonNullable<RtonByteInspection['stringInfo']>['mode'], t: Translator) {
+  if (mode === 'direct') {
+    return t('hexInspector.direct');
+  }
+  if (mode === 'definition') {
+    return t('hexInspector.definition');
+  }
+  return t('hexInspector.reference');
+}
+
+function formatInspectorOffset(offset: number) {
+  return `0x${offset.toString(16).toUpperCase().padStart(8, '0')}`;
 }
 
 function byteToHex(byte: number) {

@@ -770,6 +770,21 @@ summary {
   color: var(--color-text-strong);
 }
 
+.rton-hex-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 310px);
+}
+
+.rton-hex-table-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .rton-hex-header,
 .rton-hex-row {
   display: flex;
@@ -819,6 +834,25 @@ summary {
   font-variant-numeric: tabular-nums;
   text-align: right;
   user-select: none;
+}
+
+.rton-hex-offset-button {
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.rton-hex-offset-button:hover,
+.rton-hex-offset-button:focus-visible {
+  border-color: var(--color-border-strong);
+  background: var(--color-control);
+  color: var(--color-accent-text);
+  outline: none;
 }
 
 .rton-hex-grid {
@@ -946,6 +980,130 @@ summary {
   height: 100%;
   place-items: center;
   color: var(--color-text-muted);
+}
+
+.rton-hex-inspector {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-raised) 72%, var(--color-stage));
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rton-hex-inspector-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+}
+
+.rton-hex-inspector-header h2 {
+  margin: 0;
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.rton-hex-inspector-header span {
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.rton-hex-inspector-section {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.rton-hex-inspector-section h3 {
+  margin: 0 0 2px;
+  color: var(--color-accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rton-hex-inspector-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(72px, 0.38fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.rton-hex-inspector-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rton-hex-inspector-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.rton-hex-inspector-row strong.is-strong {
+  color: var(--color-text-strong);
+}
+
+.rton-hex-inspector-note {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.rton-hex-inspector-preview {
+  max-height: 92px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-soft);
+  color: var(--color-code-string);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rton-hex-inspector-empty {
+  display: grid;
+  min-height: 160px;
+  place-items: center;
+  padding: 16px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .rton-hex-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rton-hex-inspector {
+    display: none;
+  }
 }
 
 .rton-search-result-row {
