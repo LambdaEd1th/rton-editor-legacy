@@ -6,7 +6,7 @@ import { yaml } from '@codemirror/lang-yaml';
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import { closeSearchPanel, openSearchPanel, searchPanelOpen as isSearchPanelOpen } from '@codemirror/search';
-import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, Prec, Transaction, type Extension } from '@codemirror/state';
 import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { registerEditorShortcutOwner } from './keyboard-shortcuts';
@@ -417,6 +417,7 @@ export function CodeEditor({
     try {
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: value },
+        annotations: Transaction.addToHistory.of(false),
       });
     } finally {
       applyingExternalChange.current = false;
