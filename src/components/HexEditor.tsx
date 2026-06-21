@@ -8,6 +8,8 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from 'react';
+import { useI18n } from '../localization/use-i18n';
+import type { Translator } from '../localization/i18n';
 
 type PendingHexEdit = {
   offset: number;
@@ -62,6 +64,7 @@ export function HexEditor({
   onChange,
   onSearchPanelVisibleChange,
 }: HexEditorProps) {
+  const { lang, t } = useI18n();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const hexInputRefs = useRef(new Map<number, HTMLInputElement>());
@@ -87,8 +90,8 @@ export function HexEditor({
       : 1;
   const logicalScrollTop = scrollTop * scrollScale;
   const offsetColumnWidth = Math.max(8, Math.max(0, bytes.length - 1).toString(16).length) + 2;
-  const searchPattern = useMemo(() => parseSearchPattern(searchMode, searchQuery), [searchMode, searchQuery]);
-  const replacePattern = useMemo(() => parseReplacePattern(searchMode, replaceQuery), [searchMode, replaceQuery]);
+  const searchPattern = useMemo(() => parseSearchPattern(searchMode, searchQuery, t), [lang, searchMode, searchQuery, t]);
+  const replacePattern = useMemo(() => parseReplacePattern(searchMode, replaceQuery, t), [lang, replaceQuery, searchMode, t]);
   const currentSearchMatch = useMemo(
     () => searchMatches.matches.find((match) => selectedOffset >= match.offset && selectedOffset < match.offset + match.length) ?? null,
     [searchMatches.matches, selectedOffset],
@@ -101,16 +104,18 @@ export function HexEditor({
   }, [currentSearchMatch, searchMatches.matches]);
   const searchStatusText = useMemo(() => {
     if (searchQuery.length === 0) {
-      return '输入搜索内容';
+      return t('hex.typeSearch');
     }
     if (!searchPattern.valid) {
       return searchPattern.message;
     }
     if (searchMatches.pending) {
-      return searchMatches.matches.length > 0 ? `搜索中 · ${searchMatches.matches.length.toLocaleString()} 个匹配` : '搜索中...';
+      return searchMatches.matches.length > 0
+        ? t('hex.searchingMatches', { count: searchMatches.matches.length.toLocaleString() })
+        : t('hex.searching');
     }
     if (searchMatches.matches.length === 0) {
-      return '无匹配';
+      return t('hex.noMatches');
     }
 
     const totalText = searchMatches.capped
@@ -119,15 +124,17 @@ export function HexEditor({
     if (currentSearchMatchIndex >= 0) {
       return `${(currentSearchMatchIndex + 1).toLocaleString()} / ${totalText}`;
     }
-    return `${totalText} 个匹配`;
+    return t('hex.matches', { count: totalText });
   }, [
     currentSearchMatchIndex,
+    lang,
     searchMatches.capped,
     searchMatches.matches.length,
     searchMatches.pending,
     searchPattern.message,
     searchPattern.valid,
     searchQuery.length,
+    t,
   ]);
   const searchPanelStatusText =
     replaceQuery.length > 0 && !replacePattern.valid ? replacePattern.message : searchStatusText;
@@ -869,7 +876,7 @@ export function HexEditor({
   if (bytes.length === 0) {
     return (
       <div className="rton-hex-editor" style={style}>
-        <div className="rton-hex-empty">没有可编辑的字节</div>
+        <div className="rton-hex-empty">{t('hex.empty')}</div>
       </div>
     );
   }
@@ -889,7 +896,7 @@ export function HexEditor({
             setInsertMode((current) => !current);
           }}
         >
-          {readOnly ? '只读' : insertMode ? '插入' : '覆写'}
+          {readOnly ? t('hex.readOnly') : insertMode ? t('hex.insert') : t('hex.overwrite')}
         </button>
       </div>
       <div className="rton-hex-header" aria-hidden="true">
@@ -1012,7 +1019,7 @@ export function HexEditor({
       </div>
       {searchPanelVisible && (
         <div className="rton-hex-search-panel">
-          <div className="rton-hex-search-mode" role="group" aria-label="搜索模式">
+          <div className="rton-hex-search-mode" role="group" aria-label={t('hex.searchMode')}>
             <button
               type="button"
               className={searchMode === 'hex' ? 'rton-hex-search-mode-button is-active' : 'rton-hex-search-mode-button'}
@@ -1032,7 +1039,7 @@ export function HexEditor({
             ref={searchInputRef}
             value={searchQuery}
             className="rton-hex-search-field"
-            placeholder={searchMode === 'hex' ? '搜索 HEX' : '搜索 ASCII'}
+            placeholder={searchMode === 'hex' ? t('hex.searchHex') : t('hex.searchAscii')}
             spellCheck={false}
             onChange={(event) => setSearchQuery(event.currentTarget.value)}
             onKeyDown={handleSearchInputKeyDown}
@@ -1043,7 +1050,7 @@ export function HexEditor({
             disabled={searchControlsDisabled}
             onClick={goToPreviousSearchMatch}
           >
-            上一个
+            {t('hex.previous')}
           </button>
           <button
             type="button"
@@ -1051,7 +1058,7 @@ export function HexEditor({
             disabled={searchControlsDisabled}
             onClick={goToNextSearchMatch}
           >
-            下一个
+            {t('hex.next')}
           </button>
           <label className="rton-hex-search-check">
             <input
@@ -1060,12 +1067,12 @@ export function HexEditor({
               disabled={searchMode !== 'ascii'}
               onChange={(event) => setCaseSensitive(event.currentTarget.checked)}
             />
-            大小写
+            {t('hex.caseSensitive')}
           </label>
           <input
             value={replaceQuery}
             className="rton-hex-search-field"
-            placeholder={searchMode === 'hex' ? '替换 HEX' : '替换 ASCII'}
+            placeholder={searchMode === 'hex' ? t('hex.replaceHex') : t('hex.replaceAscii')}
             spellCheck={false}
             onChange={(event) => setReplaceQuery(event.currentTarget.value)}
             onKeyDown={handleReplaceInputKeyDown}
@@ -1076,7 +1083,7 @@ export function HexEditor({
             disabled={replaceControlsDisabled}
             onClick={replaceCurrentSearchMatch}
           >
-            替换
+            {t('hex.replace')}
           </button>
           <button
             type="button"
@@ -1084,10 +1091,10 @@ export function HexEditor({
             disabled={replaceControlsDisabled}
             onClick={replaceAllSearchMatches}
           >
-            全部替换
+            {t('hex.replaceAll')}
           </button>
           <span className="rton-hex-search-status">{searchPanelStatusText}</span>
-          <button type="button" className="rton-hex-search-close" aria-label="关闭搜索栏" onClick={hideSearchPanel}>
+          <button type="button" className="rton-hex-search-close" aria-label={t('hex.closeSearch')} onClick={hideSearchPanel}>
             ×
           </button>
         </div>
@@ -1112,26 +1119,26 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function parseSearchPattern(mode: HexSearchMode, text: string): BytePattern {
-  return mode === 'hex' ? parseHexPattern(text, false) : parseAsciiPattern(text, false);
+function parseSearchPattern(mode: HexSearchMode, text: string, t: Translator): BytePattern {
+  return mode === 'hex' ? parseHexPattern(text, false, t) : parseAsciiPattern(text, false, t);
 }
 
-function parseReplacePattern(mode: HexSearchMode, text: string): BytePattern {
-  return mode === 'hex' ? parseHexPattern(text, true) : parseAsciiPattern(text, true);
+function parseReplacePattern(mode: HexSearchMode, text: string, t: Translator): BytePattern {
+  return mode === 'hex' ? parseHexPattern(text, true, t) : parseAsciiPattern(text, true, t);
 }
 
-function parseHexPattern(text: string, allowEmpty: boolean): BytePattern {
+function parseHexPattern(text: string, allowEmpty: boolean, t: Translator): BytePattern {
   const compact = text.trim().replace(/0x/gi, '').replace(/[\s,_:-]+/g, '');
   if (compact.length === 0) {
     return allowEmpty
       ? { bytes: [], valid: true, message: '' }
-      : { bytes: [], valid: false, message: '请输入 HEX' };
+      : { bytes: [], valid: false, message: t('hex.enterHex') };
   }
   if (!/^[0-9a-fA-F]+$/.test(compact)) {
-    return { bytes: [], valid: false, message: 'HEX 只能包含 0-9/A-F' };
+    return { bytes: [], valid: false, message: t('hex.hexChars') };
   }
   if (compact.length % 2 !== 0) {
-    return { bytes: [], valid: false, message: 'HEX 长度必须为偶数' };
+    return { bytes: [], valid: false, message: t('hex.hexEven') };
   }
 
   const bytes = [];
@@ -1141,16 +1148,16 @@ function parseHexPattern(text: string, allowEmpty: boolean): BytePattern {
   return { bytes, valid: true, message: '' };
 }
 
-function parseAsciiPattern(text: string, allowEmpty: boolean): BytePattern {
+function parseAsciiPattern(text: string, allowEmpty: boolean, t: Translator): BytePattern {
   if (text.length === 0) {
     return allowEmpty
       ? { bytes: [], valid: true, message: '' }
-      : { bytes: [], valid: false, message: '请输入 ASCII' };
+      : { bytes: [], valid: false, message: t('hex.enterAscii') };
   }
 
   const bytes = latin1BytesFromText(text);
   if (!bytes) {
-    return { bytes: [], valid: false, message: 'ASCII 只能使用 0-255 字符' };
+    return { bytes: [], valid: false, message: t('hex.asciiChars') };
   }
   return { bytes, valid: true, message: '' };
 }

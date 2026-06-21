@@ -41,6 +41,8 @@ import init, {
 import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
 import { HexEditor, type HexEditorJumpTarget } from './components/HexEditor';
 import type { StructuredFormatMode } from './format-conversion';
+import { useI18n } from './localization/use-i18n';
+import { t as translate, type Translator } from './localization/i18n';
 import {
   decodeRtonValueWire,
   encodeRtonValueWire,
@@ -233,9 +235,6 @@ const SEARCH_CHUNK_MS = 10;
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
 const FORMAT_WORKER_TIMEOUT_MS = 20_000;
-const EMPTY_FILE_NAME = '未打开文件';
-const EMPTY_SURFACE_NOTE = '等待文件';
-const EMPTY_SEARCH_MESSAGE = '未打开文件';
 const LEFT_PANEL_DEFAULT_WIDTH = 300;
 const RIGHT_PANEL_DEFAULT_WIDTH = 380;
 const PANEL_MIN_WIDTH = 220;
@@ -252,11 +251,6 @@ const DEFAULT_TOOLBAR_ROWS: ToolbarRows = [
   ['file', 'format'],
   ['textExport', 'rtonExport', 'prefs'],
 ];
-const THEME_OPTIONS: Array<RtonInlineSelectOption<ThemePreference>> = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-];
 
 const buttonBase =
   'inline-flex h-7 min-w-0 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded border px-2.5 text-[13px] leading-none transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45';
@@ -266,6 +260,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 }
 
 export function App() {
+  const { lang, langs, getLangLabel, setLang, t } = useI18n();
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [loadedFiles, setLoadedFiles] = useState<LoadedRtonFile[]>([]);
   const [selectedFileKeys, setSelectedFileKeys] = useState<Set<string>>(() => new Set());
@@ -287,11 +282,11 @@ export function App() {
   const [stats, setStats] = useState(() => emptyStats());
   const [viewMode, setViewModeState] = useState<ViewMode>('json');
   const [editorSurface, setEditorSurface] = useState<EditorSurface>('text');
-  const [surfaceNote, setSurfaceNote] = useState(EMPTY_SURFACE_NOTE);
-  const [status, setStatus] = useState<StatusState>({ message: 'wasm 初始化中', tone: 'warn' });
+  const [surfaceNote, setSurfaceNote] = useState(() => t('app.waitingFile'));
+  const [status, setStatus] = useState<StatusState>(() => ({ message: t('status.wasmInitializing'), tone: 'warn' }));
   const [fileSearchQuery, setFileSearchQuery] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchState, setSearchState] = useState<SearchState>({ kind: 'message', message: EMPTY_SEARCH_MESSAGE });
+  const [searchState, setSearchState] = useState<SearchState>(() => ({ kind: 'message', message: t('app.emptyFile') }));
   const [dragging, setDragging] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
@@ -322,6 +317,18 @@ export function App() {
   const formatRequestId = useRef(0);
   const byteTransformWorker = useRef<Worker | null>(null);
   const byteTransformRequestId = useRef(0);
+  const themeOptions = useMemo<Array<RtonInlineSelectOption<ThemePreference>>>(
+    () => [
+      { value: 'system', label: t('theme.system') },
+      { value: 'light', label: t('theme.light') },
+      { value: 'dark', label: t('theme.dark') },
+    ],
+    [lang, t],
+  );
+  const languageOptions = useMemo<Array<RtonInlineSelectOption<string>>>(
+    () => langs.map((value) => ({ value, label: getLangLabel(value) })),
+    [getLangLabel, lang, langs],
+  );
 
   const setCurrentValueState = useCallback((value: RtonValue | null) => {
     currentValueRef.current = value;
@@ -381,18 +388,18 @@ export function App() {
 
       const label = request.mode.toUpperCase();
       if (request.action === 'format') {
-        setEditorTextState(`${label} 预览不可用\n\n${message}`);
-        setSurfaceNote(`${label} 预览不可用`);
-        updateStatus(`${label} 预览失败：${message}`, 'error');
+        setEditorTextState(t('format.previewUnavailableText', { label, message }));
+        setSurfaceNote(t('format.previewUnavailable', { label }));
+        updateStatus(t('format.previewFailed', { label, message }), 'error');
       } else {
-        const parseMessage = `${label} 解析失败：${message}`;
+        const parseMessage = t('format.parseFailed', { label, message });
         setParseError(parseMessage);
         setSearchState({ kind: 'message', message: parseMessage });
-        setSurfaceNote(`${label} 解析失败`);
+        setSurfaceNote(parseMessage);
         updateStatus(parseMessage, 'error');
       }
     },
-    [terminateFormatWorker, updateStatus],
+    [t, terminateFormatWorker, updateStatus],
   );
 
   const scheduleFormatWorkerTimeout = useCallback(
@@ -412,11 +419,10 @@ export function App() {
         }
 
         const label = mode.toUpperCase();
-        const actionText = action === 'format' ? '生成预览' : '解析';
-        handleFormatWorkerFailure(`${label} ${actionText}超时，已停止后台任务。这个文件可能过大，或当前格式转换库处理该结构太慢。`);
+        handleFormatWorkerFailure(t(action === 'format' ? 'format.formatTimeout' : 'format.parseTimeout', { label }));
       }, FORMAT_WORKER_TIMEOUT_MS);
     },
-    [clearFormatTimeout, handleFormatWorkerFailure],
+    [clearFormatTimeout, handleFormatWorkerFailure, t],
   );
 
   const clearPendingWork = useCallback(() => {
@@ -457,7 +463,7 @@ export function App() {
         }
 
         if (response.ok) {
-          const label = formatRtonEncoding(response.target);
+          const label = formatRtonEncoding(response.target, t);
           setByteTransformState({
             status: 'ready',
             target: response.target,
@@ -465,9 +471,9 @@ export function App() {
             elapsedMs: response.elapsedMs,
             error: null,
           });
-          updateStatus(`${label} Hex 已生成，用时 ${formatDuration(response.elapsedMs)}`, 'ok');
+          updateStatus(t('status.hexGenerated', { encoding: label, duration: formatDuration(response.elapsedMs) }), 'ok');
         } else {
-          const label = formatRtonEncoding(response.target);
+          const label = formatRtonEncoding(response.target, t);
           setByteTransformState({
             status: 'error',
             target: response.target,
@@ -475,12 +481,12 @@ export function App() {
             elapsedMs: null,
             error: response.error,
           });
-          updateStatus(`${label} Hex 生成失败：${response.error}`, 'error');
+          updateStatus(t('status.hexFailed', { encoding: label, message: response.error }), 'error');
         }
       });
       byteTransformWorker.current.addEventListener('error', (event) => {
         event.preventDefault();
-        const message = event instanceof ErrorEvent && event.message ? event.message : 'Hex 转换 worker 出错';
+        const message = event instanceof ErrorEvent && event.message ? event.message : t('status.hexWorkerError');
         setByteTransformState((current) => ({
           status: 'error',
           target: current.target,
@@ -491,7 +497,7 @@ export function App() {
         updateStatus(message, 'error');
       });
       byteTransformWorker.current.addEventListener('messageerror', () => {
-        const message = 'Hex 转换 worker 返回了无法读取的数据';
+        const message = t('status.hexWorkerUnreadable');
         setByteTransformState((current) => ({
           status: 'error',
           target: current.target,
@@ -503,7 +509,7 @@ export function App() {
       });
     }
     return byteTransformWorker.current;
-  }, [updateStatus]);
+  }, [t, updateStatus]);
 
   const snapshotActiveTab = useCallback(
     (): EditorTab | null => {
@@ -571,13 +577,13 @@ export function App() {
       setStats(emptyStats());
       setViewModeState('json');
       setEditorSurface('text');
-      setSurfaceNote(EMPTY_SURFACE_NOTE);
+      setSurfaceNote(t('app.waitingFile'));
       setSearchQuery('');
-      setSearchState({ kind: 'message', message: EMPTY_SEARCH_MESSAGE });
+      setSearchState({ kind: 'message', message: t('app.emptyFile') });
       setEditorSearchPanelVisible(false);
       setStatus(nextStatus);
     },
-    [clearPendingWork, setCurrentValueState],
+    [clearPendingWork, setCurrentValueState, t],
   );
 
   const restoreEditorTab = useCallback(
@@ -663,7 +669,7 @@ export function App() {
       const nextTabs = syncedTabs.filter((tab) => tab.id !== tabId);
       if (nextTabs.length === 0) {
         setTabs([]);
-        restoreEmptyWorkspace({ message: '没有打开的文件', tone: 'warn' });
+        restoreEmptyWorkspace({ message: t('status.noOpenFiles'), tone: 'warn' });
         return;
       }
 
@@ -673,7 +679,7 @@ export function App() {
         restoreEditorTab(nextActive);
       }
     },
-    [activeTabId, restoreEditorTab, restoreEmptyWorkspace, syncActiveTab],
+    [activeTabId, restoreEditorTab, restoreEmptyWorkspace, syncActiveTab, t],
   );
 
   const moveEditorTab = useCallback(
@@ -692,7 +698,7 @@ export function App() {
       activeSearchId.current += 1;
 
       if (!wasmReady) {
-        updateStatus('wasm 仍在初始化', 'warn');
+        updateStatus(t('status.wasmStillLoading'), 'warn');
         return;
       }
 
@@ -705,7 +711,7 @@ export function App() {
         setStats(collectStats(value));
         if (options.updateEditor || viewModeRef.current === 'json') {
           setEditorTextState(jsonText);
-          setSurfaceNote(`${viewModeRef.current.toUpperCase()} 可编辑`);
+          setSurfaceNote(t('format.editable', { label: viewModeRef.current.toUpperCase() }));
         }
         if (options.statusMessage) {
           updateStatus(options.statusMessage, 'ok');
@@ -720,7 +726,7 @@ export function App() {
         updateStatus(message, 'error');
       }
     },
-    [clearParseTimer, setCurrentValueState, updateStatus, wasmReady],
+    [clearParseTimer, setCurrentValueState, t, updateStatus, wasmReady],
   );
 
 	  const getFormatWorker = useCallback(() => {
@@ -738,8 +744,8 @@ export function App() {
 	        const label = response.mode.toUpperCase();
 	        if (response.ok && response.action === 'format') {
 	          setEditorTextState(response.text);
-	          setSurfaceNote(response.truncated ? `${label} 预览已截断` : `${label} 可编辑`);
-	          updateStatus(response.truncated ? `${label} 预览已生成并截断` : `${label} 已生成`, response.truncated ? 'warn' : 'ok');
+	          setSurfaceNote(response.truncated ? t('format.previewTruncated', { label }) : t('format.editable', { label }));
+	          updateStatus(response.truncated ? t('format.generatedTruncated', { label }) : t('format.generated', { label }), response.truncated ? 'warn' : 'ok');
 	        } else if (response.ok && response.action === 'parse') {
           const plainValue = response.plainValue as JsonValue;
           setCurrentValueState(response.value);
@@ -747,39 +753,39 @@ export function App() {
           setParseError(null);
           setStats(collectStats(response.value));
           setSearchState({ kind: 'idle' });
-          setSurfaceNote(`${label} 可编辑`);
-          updateStatus(`${label} 已解析`, 'ok');
+          setSurfaceNote(t('format.editable', { label }));
+          updateStatus(t('format.parsed', { label }), 'ok');
         } else if (!response.ok && response.action === 'format') {
-          setEditorTextState(`${label} 预览不可用\n\n${response.error}`);
-          setSurfaceNote(`${label} 预览不可用`);
-          updateStatus(`${label} 预览失败：${response.error}`, 'error');
+          setEditorTextState(t('format.previewUnavailableText', { label, message: response.error }));
+          setSurfaceNote(t('format.previewUnavailable', { label }));
+          updateStatus(t('format.previewFailed', { label, message: response.error }), 'error');
         } else if (!response.ok && response.action === 'parse') {
-          const message = `${label} 解析失败：${response.error}`;
+          const message = t('format.parseFailed', { label, message: response.error });
           setCurrentValueState(null);
           setParseError(message);
           setSearchState({ kind: 'message', message });
-          setSurfaceNote(`${label} 解析失败`);
+          setSurfaceNote(message);
 	          updateStatus(message, 'error');
 	        }
 	      });
 	      formatWorker.current.addEventListener('error', (event) => {
 	        event.preventDefault();
-	        handleFormatWorkerFailure(event instanceof ErrorEvent && event.message ? event.message : '后台格式化 worker 出错');
+	        handleFormatWorkerFailure(event instanceof ErrorEvent && event.message ? event.message : t('status.formatWorkerError'));
 	      });
 	      formatWorker.current.addEventListener('messageerror', () => {
-	        handleFormatWorkerFailure('后台格式化 worker 返回了无法读取的数据');
+	        handleFormatWorkerFailure(t('status.formatWorkerUnreadable'));
 	      });
 	    }
 	
 	    return formatWorker.current;
-	  }, [clearFormatTimeout, handleFormatWorkerFailure, setCurrentValueState, updateStatus]);
+	  }, [clearFormatTimeout, handleFormatWorkerFailure, setCurrentValueState, t, updateStatus]);
 
 	  const renderTextForValue = useCallback(
 	    (value: RtonValue, mode: ViewMode) => {
 	      const requestId = beginFormatWorkerRequest('format', mode);
 	      const label = mode.toUpperCase();
-	      setSurfaceNote(`正在生成 ${label} 预览`);
-	      setEditorTextState(`正在后台生成 ${label} 预览...`);
+	      setSurfaceNote(t('format.generatingPreview', { label }));
+	      setEditorTextState(t('format.generatingPreviewText', { label }));
 	      scheduleFormatWorkerTimeout(requestId, mode, 'format');
 	      getFormatWorker().postMessage({
 	        action: 'format',
@@ -789,31 +795,31 @@ export function App() {
 	      });
 	      return true;
 	    },
-	    [beginFormatWorkerRequest, getFormatWorker, scheduleFormatWorkerTimeout],
+	    [beginFormatWorkerRequest, getFormatWorker, scheduleFormatWorkerTimeout, t],
 	  );
 	
 	  const renderAlternateFormat = useCallback(
 	    (mode: Exclude<ViewMode, 'json'>) => {
 	      const label = mode.toUpperCase();
-	      setSurfaceNote(`正在生成 ${label} 预览`);
+	      setSurfaceNote(t('format.generatingPreview', { label }));
 	
 	      if (parseError) {
 	        invalidateFormatWork();
-	        setEditorTextState(`${label} 预览不可用\n\n当前内容无法解析：${parseError}`);
-	        setSurfaceNote(`${label} 预览不可用`);
+	        setEditorTextState(t('format.unparseablePreview', { label, message: parseError }));
+	        setSurfaceNote(t('format.previewUnavailable', { label }));
 	        return;
       }
 	
 	      const value = currentValueRef.current;
 	      if (!value) {
 	        invalidateFormatWork();
-	        setEditorTextState(`${label} 预览不可用\n\n当前内容还没有可用的 RTON Value`);
-	        setSurfaceNote(`${label} 预览不可用`);
+	        setEditorTextState(t('format.noValuePreview', { label }));
+	        setSurfaceNote(t('format.previewUnavailable', { label }));
 	        return;
 	      }
 	
 	      const requestId = beginFormatWorkerRequest('format', mode);
-	      setEditorTextState(`正在后台生成 ${label} 预览...`);
+	      setEditorTextState(t('format.generatingPreviewText', { label }));
 	      scheduleFormatWorkerTimeout(requestId, mode, 'format');
 	      getFormatWorker().postMessage({
 	        action: 'format',
@@ -822,7 +828,7 @@ export function App() {
         mode,
 	      });
 	    },
-	    [beginFormatWorkerRequest, getFormatWorker, invalidateFormatWork, parseError, scheduleFormatWorkerTimeout],
+	    [beginFormatWorkerRequest, getFormatWorker, invalidateFormatWork, parseError, scheduleFormatWorkerTimeout, t],
 	  );
 	
 	  const parseAlternateFormat = useCallback(
@@ -830,7 +836,7 @@ export function App() {
 	      clearParseTimer();
 	      const requestId = beginFormatWorkerRequest('parse', mode);
 	      const label = mode.toUpperCase();
-	      setSurfaceNote(`正在解析 ${label}`);
+	      setSurfaceNote(t('format.parsing', { label }));
 	      scheduleFormatWorkerTimeout(requestId, mode, 'parse');
 	      getFormatWorker().postMessage({
 	        action: 'parse',
@@ -839,7 +845,7 @@ export function App() {
 	        text,
 	      });
 	    },
-	    [beginFormatWorkerRequest, clearParseTimer, getFormatWorker, scheduleFormatWorkerTimeout],
+	    [beginFormatWorkerRequest, clearParseTimer, getFormatWorker, scheduleFormatWorkerTimeout, t],
 	  );
 
   const scheduleEditorParse = useCallback(
@@ -848,26 +854,26 @@ export function App() {
       activeSearchId.current += 1;
       setLastOutputBytes(null);
       if (mode === 'json') {
-        setSearchState({ kind: 'message', message: '等待 JSON 解析' });
+        setSearchState({ kind: 'message', message: t('format.waitJsonParse') });
         parseTimer.current = window.setTimeout(() => {
           parseJsonText(text);
         }, EDITOR_PARSE_DEBOUNCE_MS);
       } else {
         const label = mode.toUpperCase();
-        setSearchState({ kind: 'message', message: `等待 ${label} 解析` });
-        setSurfaceNote(`${label} 编辑中`);
+        setSearchState({ kind: 'message', message: t('format.waitParse', { label }) });
+        setSurfaceNote(t('format.editing', { label }));
         parseTimer.current = window.setTimeout(() => {
           parseAlternateFormat(mode, text);
         }, EDITOR_PARSE_DEBOUNCE_MS);
       }
     },
-    [clearParseTimer, parseAlternateFormat, parseJsonText],
+    [clearParseTimer, parseAlternateFormat, parseJsonText, t],
   );
 
   const setViewMode = useCallback(
     (mode: ViewMode) => {
       if (activeTabId === null) {
-        updateStatus('请先打开文件', 'warn');
+        updateStatus(t('status.openFileFirst'), 'warn');
         return;
       }
 
@@ -890,8 +896,8 @@ export function App() {
       if (mode === 'json') {
         const value = currentValueRef.current;
         if (!value) {
-          updateStatus(parseError ? `当前内容无法转换为 JSON：${parseError}` : '当前内容还没有可用的 RTON Value', 'error');
-          setSurfaceNote('JSON 预览不可用');
+          updateStatus(parseError ? t('format.jsonCannotConvert', { message: parseError }) : t('status.noSearchableValue'), 'error');
+          setSurfaceNote(t('format.jsonPreviewUnavailable'));
           return;
         }
 
@@ -900,11 +906,11 @@ export function App() {
 	        renderAlternateFormat(mode);
 	      }
 	    },
-			    [activeTabId, editorSurface, invalidateFormatWork, parseError, renderAlternateFormat, renderTextForValue, updateStatus],
+			    [activeTabId, editorSurface, invalidateFormatWork, parseError, renderAlternateFormat, renderTextForValue, t, updateStatus],
 			  );
 
 	  const hasActiveFile = activeTabId !== null && tabs.length > 0;
-	  const displayFileName = hasActiveFile ? fileName : EMPTY_FILE_NAME;
+	  const displayFileName = hasActiveFile ? fileName : t('app.emptyFile');
 	  const targetBinaryEncoding = useMemo<RtonBinaryEncoding>(
 	    () => ({ compact: compactOutput, encrypted: encryptOutput }),
 	    [compactOutput, encryptOutput],
@@ -923,29 +929,29 @@ export function App() {
 	  const outputText = hasActiveFile
 	    ? editorSurface === 'hex' && binaryBytes
 	      ? `${formatBytes((displayedHexBytes ?? binaryBytes).byteLength)} · ${
-	          hexVariantNeeded ? formatRtonEncoding(targetBinaryEncoding) : 'raw bytes'
+	          hexVariantNeeded ? formatRtonEncoding(targetBinaryEncoding, t) : t('app.rawBytes')
 	        }`
 	      : lastOutputBytes
 	      ? `${formatBytes(lastOutputBytes)} · ${compactOutput ? 'compact' : 'standard'}${encryptOutput ? ' · encrypted' : ''}`
-	      : '未生成'
-	    : '无';
+	      : t('app.notGenerated')
+	    : t('app.noOutput');
 	  const displaySurfaceNote =
 	    editorSurface === 'hex'
 	      ? binaryBytes
 	        ? hexVariantNeeded
-	          ? `RTON · ${formatRtonEncoding(targetBinaryEncoding)}`
+	          ? `RTON · ${formatRtonEncoding(targetBinaryEncoding, t)}`
 	          : `RTON · ${formatBytes(binaryBytes.byteLength)}`
-	        : 'RTON 不可用'
+	        : t('app.rtonUnavailable')
 	      : surfaceNote;
 
 	  const validateValue = useCallback(() => {
     if (activeTabId === null) {
-      updateStatus('请先打开文件', 'warn');
+      updateStatus(t('status.openFileFirst'), 'warn');
       return;
     }
 
     if (!wasmReady) {
-      updateStatus('wasm 仍在初始化', 'warn');
+      updateStatus(t('status.wasmStillLoading'), 'warn');
       return;
     }
 
@@ -955,17 +961,17 @@ export function App() {
 	          ? byteTransformState.bytes ?? encodeCurrentRtonBytes(currentValueRef.current, compactOutput, encryptOutput, parseError)
 	          : binaryBytes;
 	        setLastOutputBytes(outputBytes.byteLength);
-	        updateStatus(`${formatRtonEncoding(targetBinaryEncoding)} RTON 可导出`, 'ok');
+	        updateStatus(t('format.exportable', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
 	        return;
 	      }
 
       const value = currentValueRef.current;
       if (!value) {
-        throw new Error(parseError ?? '当前内容还没有可用的 RTON Value');
+        throw new Error(parseError ?? t('status.noSearchableValue'));
       }
       const bytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
       setLastOutputBytes(bytes.byteLength);
-      updateStatus(`${viewModeRef.current.toUpperCase()} 可导出`, 'ok');
+      updateStatus(t('format.exportable', { label: viewModeRef.current.toUpperCase() }), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
@@ -978,6 +984,7 @@ export function App() {
 	    encryptOutput,
 	    hexVariantNeeded,
 	    parseError,
+	    t,
 	    targetBinaryEncoding,
 	    updateStatus,
 	    wasmReady,
@@ -1056,7 +1063,7 @@ export function App() {
     void init()
       .then(() => {
         setWasmReady(true);
-        updateStatus('wasm 就绪，等待文件', 'ok');
+        updateStatus(t('status.wasmReady'), 'ok');
       })
       .catch((error: unknown) => {
         updateStatus(errorMessage(error), 'error');
@@ -1071,7 +1078,7 @@ export function App() {
       }
       formatWorker.current?.terminate();
     };
-  }, [updateStatus]);
+  }, [t, updateStatus]);
 
   useEffect(() => {
     if (wasmReady && activeTabId !== null) {
@@ -1086,7 +1093,7 @@ export function App() {
     activeSearchId.current += 1;
 
     if (activeTabId === null) {
-      setSearchState({ kind: 'message', message: EMPTY_SEARCH_MESSAGE });
+      setSearchState({ kind: 'message', message: t('app.emptyFile') });
       return;
     }
 
@@ -1097,7 +1104,7 @@ export function App() {
     }
 
     if (!currentValue) {
-      setSearchState({ kind: 'message', message: '没有可搜索的 RtonValue' });
+      setSearchState({ kind: 'message', message: t('status.noSearchableValue') });
       return;
     }
 
@@ -1106,17 +1113,17 @@ export function App() {
       return;
     }
 
-    setSearchState({ kind: 'message', message: `搜索 "${query}"...` });
+    setSearchState({ kind: 'message', message: t('status.searching', { query }) });
     const searchId = activeSearchId.current + 1;
     activeSearchId.current = searchId;
     searchTimer.current = window.setTimeout(() => {
       runChunkedSearch(currentValue, query, searchId, activeSearchId, setSearchState);
     }, SEARCH_DEBOUNCE_MS);
-  }, [activeTabId, currentValue, parseError, searchQuery]);
+  }, [activeTabId, currentValue, parseError, searchQuery, t]);
 
 	  const loadedFileItems = useMemo(
-    () => buildLoadedFileItems({ files: loadedFiles, tabs, activeTabId, fileName, sourceBytes, viewMode, editorSurface }),
-    [activeTabId, editorSurface, fileName, loadedFiles, sourceBytes, tabs, viewMode],
+    () => buildLoadedFileItems({ files: loadedFiles, tabs, activeTabId, fileName, sourceBytes, viewMode, editorSurface, t }),
+    [activeTabId, editorSurface, fileName, lang, loadedFiles, sourceBytes, tabs, viewMode, t],
   );
   const filteredLoadedFileItems = useMemo(
     () => filterLoadedFileItems(loadedFileItems, fileSearchQuery),
@@ -1131,8 +1138,15 @@ export function App() {
     0,
   );
   const fileListSubtitle = fileSearchActive
-    ? `匹配 ${visibleFileCount.toLocaleString()} / ${listedFileCount.toLocaleString()} 个文件 · 已选 ${selectedFileCount.toLocaleString()}`
-    : `已选 ${selectedFileCount.toLocaleString()} / ${listedFileCount.toLocaleString()} 个文件`;
+    ? t('fileList.matchCount', {
+        visible: visibleFileCount.toLocaleString(),
+        total: listedFileCount.toLocaleString(),
+        selected: selectedFileCount.toLocaleString(),
+      })
+    : t('fileList.selectedCount', {
+        selected: selectedFileCount.toLocaleString(),
+        total: listedFileCount.toLocaleString(),
+      });
   const workspaceStyle = {
     '--rton-left-panel-width': `${leftPanelWidth}px`,
     '--rton-right-panel-width': `${rightPanelWidth}px`,
@@ -1156,7 +1170,7 @@ export function App() {
       elapsedMs: null,
       error: null,
     });
-    updateStatus(`正在后台生成 ${formatRtonEncoding(target)} Hex`, 'warn');
+    updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(target, t) }), 'warn');
 
     getByteTransformWorker().postMessage(
       {
@@ -1172,6 +1186,7 @@ export function App() {
     resetByteTransformState,
     targetBinaryEncoding,
     terminateByteTransformWorker,
+    t,
     updateStatus,
   ]);
 
@@ -1249,19 +1264,19 @@ export function App() {
 
   const openHexEditor = useCallback(() => {
     if (activeTabId === null) {
-      updateStatus('请先打开文件', 'warn');
+      updateStatus(t('status.openFileFirst'), 'warn');
       return;
     }
 
     if (binaryBytes) {
       setEditorSurface('hex');
-      setSurfaceNote('RTON 可编辑');
+      setSurfaceNote(t('format.rtonEditable'));
       return;
     }
 
     const value = currentValueRef.current;
     if (!value) {
-      updateStatus(parseError ?? '当前内容还没有可用的 RTON Value', 'error');
+      updateStatus(parseError ?? t('status.noSearchableValue'), 'error');
       return;
     }
 
@@ -1269,15 +1284,15 @@ export function App() {
 	      const bytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
 	      setBinaryBytes(bytes);
 	      setBinaryEncoding({ compact: compactOutput, encrypted: encryptOutput });
-	      setSourceBytes(bytes);
+      setSourceBytes(bytes);
       setLastOutputBytes(null);
       setEditorSurface('hex');
-      setSurfaceNote('RTON 可编辑');
-      updateStatus('已从当前 RtonValue 生成二进制 RTON，可直接编辑字节', 'ok');
+      setSurfaceNote(t('format.rtonEditable'));
+      updateStatus(t('status.rtonBinaryGenerated'), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
-  }, [activeTabId, binaryBytes, compactOutput, encryptOutput, parseError, updateStatus]);
+  }, [activeTabId, binaryBytes, compactOutput, encryptOutput, parseError, t, updateStatus]);
 
   const onHexBytesChange = useCallback(
     (nextBytes: Uint8Array) => {
@@ -1297,10 +1312,10 @@ export function App() {
 	      setParseError(null);
 	      setStats(collectStats(value));
 	      setBinaryEncoding({ compact, encrypted });
-        setSearchState({ kind: 'idle' });
+	      setSearchState({ kind: 'idle' });
         renderTextForValue(value, viewModeRef.current);
-        setSurfaceNote('RTON 可编辑');
-        updateStatus(`RTON 已更新，${encrypted ? '加密 ' : ''}RTON 解析成功`, 'ok');
+        setSurfaceNote(t('format.rtonEditable'));
+        updateStatus(t('status.rtonUpdated', { prefix: encrypted ? `${t('toolbar.encrypted')} ` : '' }), 'ok');
       } catch (error) {
         const message = errorMessage(error);
         invalidateFormatWork();
@@ -1309,12 +1324,12 @@ export function App() {
         setParseError(message);
         setStats(emptyStats());
         setSearchState({ kind: 'message', message });
-        setSurfaceNote('RTON 无法解析');
-        updateStatus(`RTON 已更新，但 RTON 解析失败：${message}`, 'error');
+        setSurfaceNote(t('format.rtonParseUnavailable'));
+        updateStatus(t('status.rtonUpdateFailed', { message }), 'error');
       }
     },
-    [activeTabId, clearPendingWork, invalidateFormatWork, renderTextForValue, setCurrentValueState, updateStatus],
-  );
+	    [activeTabId, clearPendingWork, invalidateFormatWork, renderTextForValue, setCurrentValueState, t, updateStatus],
+	  );
 
 	  const onDisplayedHexBytesChange = useCallback(
 	    (nextBytes: Uint8Array) => {
@@ -1323,14 +1338,14 @@ export function App() {
 	        return;
 	      }
 	
-	      updateStatus('当前 Hex 是按 Compact/加密选项生成的只读预览，请切回原始形态后编辑 bytes', 'warn');
+	      updateStatus(t('status.readonlyHexPreview'), 'warn');
 	    },
-	    [hexVariantNeeded, onHexBytesChange, updateStatus],
+	    [hexVariantNeeded, onHexBytesChange, t, updateStatus],
 	  );
 
   const loadSample = () => {
     if (!wasmReady) {
-      updateStatus('wasm 仍在初始化', 'warn');
+      updateStatus(t('status.wasmStillLoading'), 'warn');
       return;
     }
 
@@ -1342,7 +1357,7 @@ export function App() {
         value,
         editorText: rtonValueToJsonText(value, true),
         sourceBytes: null,
-        status: { message: '样例已载入', tone: 'ok' },
+        status: { message: t('status.sampleLoaded'), tone: 'ok' },
       });
       nextTabId.current += 1;
       openEditorTabs([tab]);
@@ -1353,14 +1368,14 @@ export function App() {
 
   const loadRtonEntries = async (entries: RtonLoadEntry[]) => {
     if (!wasmReady) {
-      updateStatus('wasm 仍在初始化', 'warn');
+      updateStatus(t('status.wasmStillLoading'), 'warn');
       return;
     }
 
     const candidates = collectLoadableCandidates(entries, true);
     const skipped = entries.length - candidates.length;
     if (candidates.length === 0) {
-      updateStatus(`未找到 ${LOADABLE_FILE_HINT} 文件`, 'warn');
+      updateStatus(t('status.noLoadableFiles', { hint: LOADABLE_FILE_HINT }), 'warn');
       return;
     }
 
@@ -1369,7 +1384,7 @@ export function App() {
     const preferredEditorSurface: EditorSurface = activeTabId === null ? 'hex' : editorSurface;
     for (const entry of candidates) {
       try {
-        const decoded = await decodeLoadableSource(entry, viewModeRef.current, preferredEditorSurface);
+        const decoded = await decodeLoadableSource(entry, viewModeRef.current, preferredEditorSurface, t);
         loadedTabs.push(
           createEditorTabFromValue({
             id: nextTabId.current,
@@ -1397,8 +1412,10 @@ export function App() {
 	      if (nextActive.editorSurface === 'text' && nextActive.currentValue && isPendingTextPreview(nextActive.editorText)) {
 	        window.setTimeout(() => renderTextForValue(nextActive.currentValue as RtonValue, nextActive.viewMode), 0);
 	      }
-	      const suffix = skipped > 0 ? `，跳过 ${skipped} 个不支持的文件` : '';
-	      const message = loadedTabs.length === 1 ? `${loadedTabs[0].status.message}${suffix}` : `已载入 ${loadedTabs.length} 个文件${suffix}`;
+	      const suffix = skipped > 0 ? t('status.skippedFiles', { count: skipped.toLocaleString() }) : '';
+	      const message = loadedTabs.length === 1
+          ? `${loadedTabs[0].status.message}${suffix}`
+          : t('status.loadedFiles', { count: loadedTabs.length.toLocaleString(), suffix });
 	      updateStatus(message, 'ok');
     }
 
@@ -1412,7 +1429,7 @@ export function App() {
       const candidates = collectLoadableCandidates(entries, false);
       const skipped = entries.length - candidates.length;
       if (candidates.length === 0) {
-        updateStatus(`未找到 ${LOADABLE_FILE_HINT} 文件`, 'warn');
+        updateStatus(t('status.noLoadableFiles', { hint: LOADABLE_FILE_HINT }), 'warn');
         return;
       }
 
@@ -1429,10 +1446,10 @@ export function App() {
       });
 
       setLoadedFiles(nextFiles);
-      const suffix = skipped > 0 ? `，跳过 ${skipped} 个不支持的文件` : '';
-      updateStatus(`已索引 ${nextFiles.length} 个文件${suffix}，点击左侧文件加载`, 'ok');
+      const suffix = skipped > 0 ? t('status.skippedFiles', { count: skipped.toLocaleString() }) : '';
+      updateStatus(t('status.indexedFiles', { count: nextFiles.length.toLocaleString(), suffix }), 'ok');
     },
-    [updateStatus],
+    [t, updateStatus],
   );
 
   const openLoadedFile = useCallback(
@@ -1448,14 +1465,14 @@ export function App() {
       }
 
       if (!wasmReady) {
-        updateStatus('wasm 仍在初始化', 'warn');
+        updateStatus(t('status.wasmStillLoading'), 'warn');
         return;
       }
 
       try {
-        updateStatus(`正在解析 ${entry.path}`, 'warn');
+        updateStatus(t('status.parsingPath', { path: entry.path }), 'warn');
         const preferredEditorSurface: EditorSurface = activeTabId === null ? 'hex' : editorSurface;
-        const decoded = await decodeLoadableSource(entry, viewModeRef.current, preferredEditorSurface);
+        const decoded = await decodeLoadableSource(entry, viewModeRef.current, preferredEditorSurface, t);
         const tabId = nextTabId.current;
         const tab = createEditorTabFromValue({
           id: tabId,
@@ -1481,7 +1498,7 @@ export function App() {
         updateStatus(`${entry.path}: ${errorMessage(error)}`, 'error');
       }
     },
-	    [activateEditorTab, activeTabId, editorSurface, loadedFiles, openEditorTabs, renderTextForValue, tabs, updateStatus, wasmReady],
+	    [activateEditorTab, activeTabId, editorSurface, loadedFiles, openEditorTabs, renderTextForValue, t, tabs, updateStatus, wasmReady],
 	  );
 
   const loadRtonFiles = async (files: File[]) => {
@@ -1491,7 +1508,7 @@ export function App() {
   const loadRtonFolder = async () => {
     const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
     if (!picker) {
-      updateStatus('Safari 不支持点击选择文件夹，请把文件夹拖到页面中加载', 'warn');
+      updateStatus(t('status.folderPickerSafari'), 'warn');
       return;
     }
 
@@ -1504,7 +1521,7 @@ export function App() {
         return;
       }
       if (isDirectoryPickerGestureError(error)) {
-        updateStatus('浏览器拒绝打开目录选择器，请把文件夹拖到页面中加载', 'warn');
+        updateStatus(t('status.folderPickerDenied'), 'warn');
         return;
       }
       updateStatus(errorMessage(error), 'error');
@@ -1513,12 +1530,12 @@ export function App() {
 
   const downloadRton = () => {
     if (activeTabId === null) {
-      updateStatus('请先打开文件', 'warn');
+      updateStatus(t('status.openFileFirst'), 'warn');
       return;
     }
 
     if (!wasmReady) {
-      updateStatus('wasm 仍在初始化', 'warn');
+      updateStatus(t('status.wasmStillLoading'), 'warn');
       return;
     }
 
@@ -1529,18 +1546,18 @@ export function App() {
 	          : binaryBytes;
 	        setLastOutputBytes(outputBytes.byteLength);
 	        downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
-	        updateStatus(`${formatRtonEncoding(targetBinaryEncoding)} RTON 已生成`, 'ok');
+	        updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
 	        return;
 	      }
 
       const value = currentValueRef.current;
       if (!value) {
-        throw new Error(parseError ?? '当前内容还没有可用的 RTON Value');
+        throw new Error(parseError ?? t('status.noSearchableValue'));
       }
       const outputBytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
       setLastOutputBytes(outputBytes.byteLength);
       downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
-      updateStatus(`${compactOutput ? 'Compact' : 'Standard'} RTON${encryptOutput ? ' 已加密' : ''} 已生成`, 'ok');
+      updateStatus(t('format.generated', { label: `${formatRtonEncoding({ compact: compactOutput, encrypted: encryptOutput }, t)} RTON` }), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
@@ -1548,17 +1565,17 @@ export function App() {
 
   const downloadJson = () => {
     if (activeTabId === null) {
-      updateStatus('请先打开文件', 'warn');
+      updateStatus(t('status.openFileFirst'), 'warn');
       return;
     }
 
     try {
       const value = currentValueRef.current;
       if (!value) {
-        throw new Error(parseError ?? '当前内容还没有可用的 RTON Value');
+        throw new Error(parseError ?? t('status.noSearchableValue'));
       }
       downloadBlob(new Blob([rtonValueToJsonText(value, true)], { type: 'application/json' }), outputBaseName(fileName, 'json'));
-      updateStatus('JSON 已生成', 'ok');
+      updateStatus(t('format.generated', { label: 'JSON' }), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
@@ -1566,19 +1583,19 @@ export function App() {
 
   const downloadStructuredFormat = async (mode: StructuredFormatMode) => {
     if (activeTabId === null) {
-      updateStatus('请先打开文件', 'warn');
+      updateStatus(t('status.openFileFirst'), 'warn');
       return;
     }
 
     try {
       const value = currentValueRef.current;
       if (!value) {
-        throw new Error(parseError ?? '当前内容还没有可用的 RTON Value');
+        throw new Error(parseError ?? t('status.noSearchableValue'));
       }
       const { formatStructuredText } = await import('./format-conversion');
       const text = formatStructuredText(value, mode);
       downloadBlob(text, outputBaseName(fileName, mode), mode === 'yaml' ? 'application/yaml' : 'application/toml');
-      updateStatus(`${mode.toUpperCase()} 已生成`, 'ok');
+      updateStatus(t('format.generated', { label: mode.toUpperCase() }), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
@@ -1587,17 +1604,17 @@ export function App() {
   const batchExportSelectedFiles = useCallback(
     async (mode: BatchExportMode) => {
       if (!wasmReady) {
-        updateStatus('wasm 仍在初始化', 'warn');
+        updateStatus(t('status.wasmStillLoading'), 'warn');
         return;
       }
 
       const selectedItems = loadedFileItems.filter((item) => selectedFileKeys.has(item.key));
       if (selectedItems.length === 0) {
-        updateStatus('请先在左侧文件列表选择文件', 'warn');
+        updateStatus(t('status.selectFilesFirst'), 'warn');
         return;
       }
 
-      updateStatus(`正在批量转换 ${selectedItems.length.toLocaleString()} 个文件为 ${mode.toUpperCase()}`, 'warn');
+      updateStatus(t('status.batchConverting', { count: selectedItems.length.toLocaleString(), format: mode.toUpperCase() }), 'warn');
 
       const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
       const filesById = new Map(loadedFiles.map((file) => [file.id, file]));
@@ -1635,14 +1652,17 @@ export function App() {
       }
 
       if (zipEntries.length === 0) {
-        updateStatus(errors[0] ?? '没有文件转换成功', 'error');
+        updateStatus(errors[0] ?? t('status.noBatchSuccess'), 'error');
         return;
       }
 
       const zipBytes = createZipArchive(zipEntries);
       downloadBytes(zipBytes, `rton-editor-${mode}-${timestampForFileName()}.zip`);
-      const errorSuffix = errors.length > 0 ? `，${errors.length} 个失败` : '';
-      updateStatus(`已批量导出 ${zipEntries.length.toLocaleString()} 个 ${mode.toUpperCase()}${errorSuffix}`, errors.length > 0 ? 'warn' : 'ok');
+      const errorSuffix = errors.length > 0 ? t('status.batchFailureSuffix', { count: errors.length.toLocaleString() }) : '';
+      updateStatus(
+        t('status.batchExported', { count: zipEntries.length.toLocaleString(), format: mode.toUpperCase(), suffix: errorSuffix }),
+        errors.length > 0 ? 'warn' : 'ok',
+      );
     },
     [
       activeTabId,
@@ -1651,6 +1671,7 @@ export function App() {
       loadedFileItems,
       loadedFiles,
       selectedFileKeys,
+      t,
       tabs,
       updateStatus,
       wasmReady,
@@ -1660,13 +1681,13 @@ export function App() {
   const updateRtonValueNode = useCallback(
     (path: RtonValuePath, nextValue: RtonValue) => {
       if (activeTabId === null) {
-        updateStatus('请先打开文件', 'warn');
+        updateStatus(t('status.openFileFirst'), 'warn');
         return;
       }
 
       const current = currentValueRef.current;
       if (!current) {
-        updateStatus(parseError ?? '当前内容还没有可用的 RTON Value', 'error');
+        updateStatus(parseError ?? t('status.noSearchableValue'), 'error');
         return;
       }
 
@@ -1678,39 +1699,39 @@ export function App() {
 	        setStats(collectStats(updated));
 	        setLastOutputBytes(null);
 	        setBinaryBytes(null);
-	        setBinaryEncoding(null);
+        setBinaryEncoding(null);
 	        setEditorSurface('text');
         const rendered = renderTextForValue(updated, viewModeRef.current);
-        updateStatus(rendered ? 'RtonValue 已更新' : 'RtonValue 已更新，JSON 预览不可用', rendered ? 'ok' : 'warn');
+        updateStatus(rendered ? t('status.rtonValueUpdated') : t('status.rtonValueUpdatedNoJson'), rendered ? 'ok' : 'warn');
       } catch (error) {
         updateStatus(errorMessage(error), 'error');
       }
     },
-    [activeTabId, parseError, renderTextForValue, setCurrentValueState, updateStatus],
+    [activeTabId, parseError, renderTextForValue, setCurrentValueState, t, updateStatus],
   );
 
   const navigateToRtonValueNode = useCallback(
     (path: RtonValuePath) => {
       const value = currentValueRef.current;
       if (!value) {
-        updateStatus(parseError ?? '当前内容还没有可用的 RTON Value', 'warn');
+        updateStatus(parseError ?? t('status.noSearchableValue'), 'warn');
         return;
       }
 
 	      if (editorSurface === 'hex') {
 	        const navigableBytes = displayedHexBytes ?? binaryBytes;
 	        if (!navigableBytes) {
-	          updateStatus('当前没有可跳转的 RTON 字节', 'warn');
+	          updateStatus(t('status.noJumpBytes'), 'warn');
           return;
         }
         if (isEncryptedRtonBytes(navigableBytes)) {
-          updateStatus('当前显示的是加密 RTON 密文字节，无法按解密后的结构跳转 offset', 'warn');
+          updateStatus(t('status.encryptedOffsetUnavailable'), 'warn');
           return;
         }
 
         const offset = locateRtonValueOffset(navigableBytes, path);
         if (offset === null) {
-          updateStatus('未找到对应 RTON offset', 'warn');
+          updateStatus(t('status.offsetNotFound'), 'warn');
           return;
         }
 
@@ -1719,13 +1740,13 @@ export function App() {
           offset,
         });
         nextHexJumpId.current += 1;
-        updateStatus(`已跳转到 offset 0x${offset.toString(16).toUpperCase()}`, 'ok');
+        updateStatus(t('status.jumpedOffset', { offset: offset.toString(16).toUpperCase() }), 'ok');
         return;
       }
 
       const position = locateRtonPathInText(value, path, editorText, viewModeRef.current);
       if (!position) {
-        updateStatus('未找到对应文本行', 'warn');
+        updateStatus(t('status.textLineNotFound'), 'warn');
         return;
       }
 
@@ -1735,35 +1756,35 @@ export function App() {
         column: position.column,
       });
       nextEditorJumpId.current += 1;
-      updateStatus(`已跳转到第 ${position.line.toLocaleString()} 行`, 'ok');
+      updateStatus(t('status.jumpedLine', { line: position.line.toLocaleString() }), 'ok');
     },
-	    [binaryBytes, displayedHexBytes, editorSurface, editorText, parseError, updateStatus],
+	    [binaryBytes, displayedHexBytes, editorSurface, editorText, parseError, t, updateStatus],
 	  );
 
   const toolbarGroups = {
     file: {
-      label: '文件',
+      label: t('toolbar.file'),
       content: (
         <>
           <button type="button" onClick={() => fileInputRef.current?.click()} className={buttonClass('primary')}>
             <FileUp />
-            打开文件
+            {t('toolbar.openFile')}
           </button>
           <button type="button" onClick={() => void loadRtonFolder()} className={buttonClass('secondary')}>
             <FolderOpen />
-            打开文件夹
+            {t('toolbar.openFolder')}
           </button>
           <button type="button" onClick={loadSample} className={buttonClass('secondary')}>
-            样例
+            {t('toolbar.sample')}
           </button>
           <span className="min-w-24 max-w-80 flex-1 truncate px-1 font-semibold text-[var(--color-text-strong)]">{displayFileName}</span>
         </>
       ),
     },
     format: {
-      label: '文本格式',
+      label: t('toolbar.textFormat'),
       role: 'tablist',
-      ariaLabel: '文本格式',
+      ariaLabel: t('toolbar.textFormat'),
       content: (
         <>
           <button
@@ -1794,8 +1815,8 @@ export function App() {
       ),
     },
     textExport: {
-      label: '文本导出',
-      ariaLabel: '文本导出',
+      label: t('toolbar.textExport'),
+      ariaLabel: t('toolbar.textExport'),
       content: (
         <>
           <button
@@ -1829,8 +1850,8 @@ export function App() {
       ),
     },
     rtonExport: {
-      label: 'RTON 导出',
-      ariaLabel: 'RTON 导出',
+      label: t('toolbar.rtonExport'),
+      ariaLabel: t('toolbar.rtonExport'),
       content: (
         <>
           <label className="rton-switch">
@@ -1845,7 +1866,7 @@ export function App() {
                 refreshOutputBytesForOptions(nextCompact, encryptOutput);
               }}
             />
-            <span className="rton-switch-label">Compact</span>
+            <span className="rton-switch-label">{t('toolbar.compact')}</span>
             <span className="rton-switch-track" aria-hidden="true" />
           </label>
           <label className="rton-switch">
@@ -1860,12 +1881,12 @@ export function App() {
                 refreshOutputBytesForOptions(compactOutput, nextEncrypt);
               }}
             />
-            <span className="rton-switch-label">加密</span>
+            <span className="rton-switch-label">{t('toolbar.encrypted')}</span>
             <span className="rton-switch-track" aria-hidden="true" />
           </label>
 	          <button type="button" onClick={validateValue} disabled={!hasActiveFile || !wasmReady} className={buttonClass('secondary')}>
             <CheckCircle2 />
-            验证
+            {t('toolbar.validate')}
           </button>
           <button type="button" onClick={downloadRton} disabled={!hasActiveFile || !wasmReady} className={buttonClass('primary')}>
             <Download />
@@ -1875,19 +1896,30 @@ export function App() {
       ),
     },
     prefs: {
-      label: '偏好',
-      ariaLabel: '偏好',
+      label: t('toolbar.preferences'),
+      ariaLabel: t('toolbar.preferences'),
       content: (
         <>
           <label className="rton-theme-label">
-            <span>主题</span>
+            <span>{t('toolbar.theme')}</span>
             <RtonInlineSelect
               value={themePreference}
-              options={THEME_OPTIONS}
-              ariaLabel="选择主题"
+              options={themeOptions}
+              ariaLabel={t('toolbar.chooseTheme')}
               variant="toolbar"
               className="rton-theme-select"
               onChange={setThemePreference}
+            />
+          </label>
+          <label className="rton-theme-label">
+            <span>{t('toolbar.language')}</span>
+            <RtonInlineSelect
+              value={lang}
+              options={languageOptions}
+              ariaLabel={t('toolbar.chooseLanguage')}
+              variant="toolbar"
+              className="rton-theme-select"
+              onChange={setLang}
             />
           </label>
           <label className="rton-switch">
@@ -1895,10 +1927,10 @@ export function App() {
               type="checkbox"
               checked={lineWrapping}
               className="rton-switch-input"
-              aria-label="自动换行"
+              aria-label={t('toolbar.lineWrap')}
               onChange={(event) => setLineWrapping(event.currentTarget.checked)}
             />
-            <span className="rton-switch-label">自动换行</span>
+            <span className="rton-switch-label">{t('toolbar.lineWrap')}</span>
             <span className="rton-switch-track" aria-hidden="true" />
           </label>
           <label className="rton-switch">
@@ -1907,10 +1939,10 @@ export function App() {
               checked={hasActiveFile && editorSearchPanelVisible}
               disabled={!hasActiveFile}
               className="rton-switch-input"
-              aria-label="搜索栏"
+              aria-label={t('toolbar.searchPanel')}
               onChange={(event) => setEditorSearchPanelVisible(event.currentTarget.checked)}
             />
-            <span className="rton-switch-label">搜索栏</span>
+            <span className="rton-switch-label">{t('toolbar.searchPanel')}</span>
             <span className="rton-switch-track" aria-hidden="true" />
           </label>
         </>
@@ -1975,17 +2007,17 @@ export function App() {
           <aside className="rton-side-panel rton-side-panel-left">
           <PanelHeader
             icon={<FileArchive />}
-            title="文件列表"
+            title={t('fileList.title')}
             subtitle={fileListSubtitle}
             actions={
               <>
                 <button type="button" onClick={selectAllListedFiles} disabled={visibleFileCount === 0} className={buttonClass('secondary')}>
                   <CheckCheck />
-                  全选
+                  {t('fileList.selectAll')}
                 </button>
                 <button type="button" onClick={clearSelectedFiles} disabled={selectedVisibleFileCount === 0} className={buttonClass('secondary')}>
                   <Square />
-                  全不选
+                  {t('fileList.selectNone')}
                 </button>
               </>
             }
@@ -2011,7 +2043,7 @@ export function App() {
               <input
                 type="search"
                 value={fileSearchQuery}
-                placeholder="搜索文件"
+                placeholder={t('fileList.searchPlaceholder')}
                 disabled={listedFileCount === 0}
                 className="h-7 w-full rounded border border-[var(--color-border-strong)] bg-[var(--color-control)] py-0 pl-7 pr-7 text-sm text-[var(--color-text-strong)] placeholder:text-[var(--color-placeholder)] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
                 onChange={(event) => setFileSearchQuery(event.currentTarget.value)}
@@ -2024,7 +2056,7 @@ export function App() {
               {fileSearchQuery && (
                 <button
                   type="button"
-                  aria-label="清除文件搜索"
+                  aria-label={t('fileList.clearSearch')}
                   className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded border-0 bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-strong)] focus-visible:outline-none"
                   onClick={() => setFileSearchQuery('')}
                 >
@@ -2038,7 +2070,7 @@ export function App() {
             <LoadedFilesTree
               items={filteredLoadedFileItems}
               selectedKeys={selectedFileKeys}
-              emptyMessage={fileSearchActive ? '没有匹配的文件' : '未打开文件'}
+              emptyMessage={fileSearchActive ? t('fileList.noMatches') : t('app.emptyFile')}
               forceOpenFolders={fileSearchActive}
               onOpenFile={openLoadedFile}
               onActivate={activateEditorTab}
@@ -2075,9 +2107,9 @@ export function App() {
             <div className="rton-empty-drop-stage flex h-full min-h-0 flex-col items-center justify-center p-6 text-center">
               <FolderOpen aria-hidden="true" className="mb-3 h-12 w-12 text-[var(--color-accent-text)] opacity-70" />
               <div className="mb-1 max-w-[460px] text-[17px] font-semibold text-[var(--color-drop-hint)]">
-                拖放文件或文件夹到此处加载
+                {t('drop.title')}
               </div>
-              <div className="text-[13px] text-[var(--color-drop-hint-sub)]">支持 {LOADABLE_FILE_HINT}，文件夹会保留相对路径</div>
+              <div className="text-[13px] text-[var(--color-drop-hint-sub)]">{t('drop.subtitle', { hint: LOADABLE_FILE_HINT })}</div>
             </div>
           )}
         </section>
@@ -2086,27 +2118,27 @@ export function App() {
 
         <aside className="rton-side-panel rton-side-panel-right">
           <div className="shrink-0 border-b border-[var(--color-border)]">
-            <PanelHeader icon={<FileArchive />} title="文件属性" subtitle="当前文件" />
+            <PanelHeader icon={<FileArchive />} title={t('panel.fileProperties')} subtitle={t('panel.currentFile')} />
             <section className="border-b border-[var(--color-border)] p-3">
               <dl className="grid gap-3 text-sm">
-                <MetaItem label="名称" value={displayFileName} />
-                <MetaItem label="输入" value={hasActiveFile ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : '文本') : '无'} />
-                <MetaItem label="输出" value={outputText} />
+                <MetaItem label={t('panel.name')} value={displayFileName} />
+                <MetaItem label={t('panel.input')} value={hasActiveFile ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : t('app.textInput')) : t('app.noOutput')} />
+                <MetaItem label={t('panel.output')} value={outputText} />
 	                {hexVariantNeeded && (
 	                  <MetaItem
 	                    label="Hex"
 	                    value={
 	                      byteTransformState.bytes
-	                        ? `${formatRtonEncoding(byteTransformState.target ?? targetBinaryEncoding)} · ${formatBytes(byteTransformState.bytes.byteLength)}${
+	                        ? `${formatRtonEncoding(byteTransformState.target ?? targetBinaryEncoding, t)} · ${formatBytes(byteTransformState.bytes.byteLength)}${
 	                            byteTransformState.elapsedMs === null ? '' : ` · ${formatDuration(byteTransformState.elapsedMs)}`
 	                          }`
 	                        : byteTransformState.error
-	                        ? `不可用：${byteTransformState.error}`
+	                        ? t('panel.hexUnavailable', { message: byteTransformState.error })
 	                        : byteTransformState.status === 'running' && byteTransformState.target
-	                        ? `${formatRtonEncoding(byteTransformState.target)} 生成中`
+	                        ? t('panel.hexGenerating', { encoding: formatRtonEncoding(byteTransformState.target, t) })
 	                        : canGenerateHexVariant
-	                        ? '未生成'
-	                        : '仅 RTON Hex 视图可用'
+	                        ? t('panel.hexNotGenerated')
+	                        : t('panel.hexOnlyRton')
 	                    }
                   />
                 )}
@@ -2116,13 +2148,13 @@ export function App() {
             <section className="p-3">
               <div className="mb-3 flex items-center gap-2">
                 <Activity className="h-4 w-4 text-[var(--color-text-muted)]" />
-                <h2 className="text-xs font-semibold uppercase text-[var(--color-text-muted)]">统计</h2>
+                <h2 className="text-xs font-semibold uppercase text-[var(--color-text-muted)]">{t('panel.stats')}</h2>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <Stat label="节点" value={stats.nodes} />
-                <Stat label="对象" value={stats.objects} />
-                <Stat label="数组" value={stats.arrays} />
-                <Stat label="深度" value={stats.maxDepth} />
+                <Stat label={t('panel.nodes')} value={stats.nodes} />
+                <Stat label={t('panel.objects')} value={stats.objects} />
+                <Stat label={t('panel.arrays')} value={stats.arrays} />
+                <Stat label={t('panel.depth')} value={stats.maxDepth} />
               </div>
             </section>
           </div>
@@ -2132,7 +2164,7 @@ export function App() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-[var(--color-text-strong)]">
                   <ListTree className="h-4 w-4 text-[var(--color-accent-text)]" />
-                  <h2 className="text-sm font-semibold leading-none">索引</h2>
+                  <h2 className="text-sm font-semibold leading-none">{t('panel.index')}</h2>
                 </div>
                 <p className="mt-1 text-xs text-[var(--color-text-muted)]">RtonValue</p>
               </div>
@@ -2141,7 +2173,7 @@ export function App() {
                 <input
                   type="search"
                   value={searchQuery}
-                  placeholder="搜索"
+                  placeholder={t('panel.search')}
                   disabled={!hasActiveFile}
                   className="h-7 w-full rounded border border-[var(--color-border-strong)] bg-[var(--color-control)] py-0 pl-7 pr-7 text-sm text-[var(--color-text-strong)] placeholder:text-[var(--color-placeholder)] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
                   onChange={(event) => setSearchQuery(event.currentTarget.value)}
@@ -2154,7 +2186,7 @@ export function App() {
                 {searchQuery && (
                   <button
                     type="button"
-                    aria-label="清除索引搜索"
+                    aria-label={t('panel.clearIndexSearch')}
                     className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded border-0 bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-strong)] focus-visible:outline-none"
                     onClick={() => setSearchQuery('')}
                   >
@@ -2184,7 +2216,7 @@ export function App() {
           {status.message}
         </span>
         <span className="hidden shrink-0 tabular-nums text-[var(--color-text-muted)] sm:inline">{displayFileName}</span>
-        <span className="hidden shrink-0 tabular-nums text-[var(--color-text-muted)] sm:inline">输出 {outputText}</span>
+        <span className="hidden shrink-0 tabular-nums text-[var(--color-text-muted)] sm:inline">{t('app.output')} {outputText}</span>
         <a
           href="https://space.bilibili.com/8217621"
           target="_blank"
@@ -2255,6 +2287,7 @@ function PanelResizeHandle({
   width: number;
   onResize: (side: PanelSide, width: number) => void;
 }) {
+  const { t } = useI18n();
   const [dragging, setDragging] = useState(false);
   const draggingRef = useRef(false);
   const startRef = useRef({ x: 0, width });
@@ -2300,7 +2333,7 @@ function PanelResizeHandle({
       className={cx('rton-resize-handle', `rton-resize-handle-${side}`, dragging && 'dragging')}
       role="separator"
       aria-orientation="vertical"
-      aria-label={side === 'left' ? '调整文件列表宽度' : '调整文件属性宽度'}
+      aria-label={side === 'left' ? t('resize.fileList') : t('resize.fileProperties')}
       onPointerDown={(event) => {
         event.preventDefault();
         startRef.current = { x: event.clientX, width };
@@ -2331,6 +2364,7 @@ function PanelResizeHandle({
 }
 
 function DraggableToolbar({ groups }: { groups: Record<ToolbarGroupId, ToolbarGroupConfig> }) {
+  const { t } = useI18n();
   const dragGroupIdRef = useRef<ToolbarGroupId | null>(null);
   const dragHandleIdRef = useRef<ToolbarGroupId | null>(null);
   const [rows, setRows] = useState<ToolbarRows>(() => readToolbarRows());
@@ -2475,8 +2509,8 @@ function DraggableToolbar({ groups }: { groups: Record<ToolbarGroupId, ToolbarGr
                 <button
                   type="button"
                   className="rton-toolbar-group-drag-handle"
-                  title={`拖动移动工具栏分组：${group.label}`}
-                  aria-label={`拖动移动工具栏分组：${group.label}`}
+                  title={t('toolbar.moveGroup', { label: group.label })}
+                  aria-label={t('toolbar.moveGroup', { label: group.label })}
                   onMouseDown={(event) => armDragHandle(event, id)}
                 >
                   <GripVertical aria-hidden="true" />
@@ -2508,6 +2542,7 @@ function EditorTabStrip({
   onClose: (tabId: number) => void;
   onMove: (tabId: number, targetTabId: number, placement: DropPlacement) => void;
 }) {
+  const { t } = useI18n();
   const dragTabIdRef = useRef<number | null>(null);
   const dragArmedTabIdRef = useRef<number | null>(null);
   const tabsRef = useRef(tabs);
@@ -2604,7 +2639,7 @@ function EditorTabStrip({
 
   return (
     <nav className="rton-tab-strip">
-      <div role="tablist" aria-label="已打开文件" className="rton-file-tabs" onDragOver={moveDraggedTabInContainer}>
+      <div role="tablist" aria-label={t('tabs.openFiles')} className="rton-file-tabs" onDragOver={moveDraggedTabInContainer}>
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
           const fullName = active ? fileName : tab.fileName;
@@ -2632,7 +2667,7 @@ function EditorTabStrip({
                 type="button"
                 role="tab"
                 aria-selected={active}
-                title={`切换到 ${fullName}`}
+                title={t('tabs.switchTo', { name: fullName })}
                 className="min-w-0 flex-1 border-0 bg-transparent px-2.5 text-left text-inherit focus-visible:outline-none"
                 onClick={() => onActivate(tab.id)}
               >
@@ -2640,8 +2675,8 @@ function EditorTabStrip({
               </button>
               <button
                 type="button"
-                title="关闭此文件"
-                aria-label="关闭此文件"
+                title={t('tabs.close')}
+                aria-label={t('tabs.close')}
                 className="rton-file-tab-close mr-1 grid h-5 w-5 shrink-0 place-items-center rounded border-0 bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-strong)] focus-visible:outline-none"
                 onClick={(event) => {
                   event.stopPropagation();
@@ -2679,10 +2714,11 @@ function LoadedFilesTree({
   onToggleSelected: (key: string, selected: boolean) => void;
   onToggleSelectedMany: (keys: string[], selected: boolean) => void;
 }) {
+  const { t } = useI18n();
   const nodes = useMemo(() => buildLoadedFileTree(items), [items]);
 
   return (
-    <div role="tree" aria-label="已加载文件" className="grid gap-1">
+    <div role="tree" aria-label={t('fileList.loadedFiles')} className="grid gap-1">
       {nodes.length === 0 ? (
         <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-3 text-xs text-[var(--color-text-muted)]">
           {emptyMessage}
@@ -2728,6 +2764,7 @@ function LoadedFileTreeNodeView({
   onToggleSelected: (key: string, selected: boolean) => void;
   onToggleSelectedMany: (keys: string[], selected: boolean) => void;
 }) {
+  const { t } = useI18n();
   if (node.kind === 'folder') {
     return (
       <LoadedFolderTreeNodeView
@@ -2751,7 +2788,7 @@ function LoadedFileTreeNodeView({
         <input
           type="checkbox"
           checked={selectedKeys.has(item.key)}
-          aria-label={`选择 ${item.path}`}
+          aria-label={t('fileList.selectPath', { path: item.path })}
           className="h-4 w-4 accent-[var(--color-accent)]"
           onChange={(event) => onToggleSelected(item.key, event.currentTarget.checked)}
           onClick={(event) => event.stopPropagation()}
@@ -2779,8 +2816,8 @@ function LoadedFileTreeNodeView({
       {canClose && closeTabId !== null && (
         <button
           type="button"
-          title="关闭此文件"
-          aria-label="关闭此文件"
+          title={t('tabs.close')}
+          aria-label={t('tabs.close')}
           className="mr-1 grid h-6 w-6 shrink-0 place-items-center rounded border-0 bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-strong)] focus-visible:outline-none"
           onClick={(event) => {
             event.stopPropagation();
@@ -2813,6 +2850,7 @@ function LoadedFolderTreeNodeView({
   onToggleSelected: (key: string, selected: boolean) => void;
   onToggleSelectedMany: (keys: string[], selected: boolean) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const checkboxRef = useRef<HTMLInputElement | null>(null);
   const fileKeys = useMemo(() => collectLoadedFileKeys(node), [node]);
@@ -2844,14 +2882,16 @@ function LoadedFolderTreeNodeView({
               ref={checkboxRef}
               type="checkbox"
               checked={checked}
-              aria-label={`选择 ${node.path}`}
+              aria-label={t('fileList.selectPath', { path: node.path })}
               className="h-4 w-4 accent-[var(--color-accent)]"
               onChange={(event) => onToggleSelectedMany(fileKeys, event.currentTarget.checked)}
               onClick={(event) => event.stopPropagation()}
             />
           </label>
           <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono">{node.name}</span>
-          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal tabular-nums text-[var(--color-text-subtle)]">{node.count} 个文件</span>
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal tabular-nums text-[var(--color-text-subtle)]">
+            {t('fileList.fileCount', { count: node.count.toLocaleString() })}
+          </span>
         </span>
       </summary>
       {detailsOpen && (
@@ -2889,20 +2929,25 @@ function InspectorContent({
   onNavigate: (path: RtonValuePath) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
   if (state.kind === 'message') {
     return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">{state.message}</div>;
   }
 
   if (state.kind === 'results') {
     if (state.matches.length === 0) {
-      return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">{state.done ? '没有匹配' : `搜索中... 已扫描 ${state.scanned.toLocaleString()} 个节点`}</div>;
+      return (
+        <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">
+          {state.done ? t('inspector.noMatches') : t('inspector.searchingScanned', { count: state.scanned.toLocaleString() })}
+        </div>
+      );
     }
 
     const summary = state.capped
-      ? `显示前 ${SEARCH_MATCH_LIMIT} 条匹配，请继续输入以缩小范围`
+      ? t('inspector.capped', { limit: SEARCH_MATCH_LIMIT.toLocaleString() })
       : state.done
-        ? `${state.matches.length} 条匹配，扫描 ${state.scanned.toLocaleString()} 个节点`
-        : `${state.matches.length} 条匹配，仍在搜索...`;
+        ? t('inspector.doneSummary', { matches: state.matches.length.toLocaleString(), scanned: state.scanned.toLocaleString() })
+        : t('inspector.searchingSummary', { matches: state.matches.length.toLocaleString() });
 
     return (
       <div className="grid gap-1">
@@ -2929,7 +2974,7 @@ function InspectorContent({
   }
 
   if (!value) {
-    return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">没有可浏览的 RtonValue</div>;
+    return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">{t('inspector.noValue')}</div>;
   }
 
   return <RtonValueTreeNode label="$" value={value} path={[]} depth={0} onChange={onChange} onNavigate={onNavigate} onError={onError} />;
@@ -3071,6 +3116,7 @@ function RtonValueTreeChildren({
   onNavigate: (path: RtonValuePath) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
   const shown = entries.slice(0, TREE_CHILD_LIMIT);
 
   return (
@@ -3089,7 +3135,7 @@ function RtonValueTreeChildren({
       ))}
       {entries.length > shown.length && (
         <div className="my-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2 text-[var(--color-text-muted)]">
-          仅显示前 {shown.length} 项，共 {entries.length} 项。请用搜索定位更深内容。
+          {t('inspector.truncated', { shown: shown.length.toLocaleString(), total: entries.length.toLocaleString() })}
         </div>
       )}
     </div>
@@ -3298,11 +3344,12 @@ function RtonValueKindSelect({
   onError: (message: string) => void;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <RtonInlineSelect
       value={value.kind}
       options={RTON_VALUE_KIND_OPTIONS}
-      ariaLabel="选择 RtonValue 类型"
+      ariaLabel={t('inspector.chooseValueType')}
       className={cx('rton-inline-select-kind', className)}
       onChange={(nextKind) => {
         try {
@@ -3326,6 +3373,7 @@ function RtonScalarEditor({
   onChange: (path: RtonValuePath, value: RtonValue) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
   const [text, setText] = useState(() => rtonScalarEditText(value));
 
   useEffect(() => {
@@ -3344,7 +3392,7 @@ function RtonScalarEditor({
           { value: 'true', label: 'true' },
           { value: 'false', label: 'false' },
         ]}
-        ariaLabel="选择布尔值"
+        ariaLabel={t('inspector.chooseBool')}
         className="rton-inline-select-bool"
         onChange={(nextValue) => onChange(path, { kind: 'bool', value: nextValue === 'true' })}
       />
@@ -3675,13 +3723,13 @@ function defaultRtonValue(kind: Exclude<RtonValue['kind'], 'array' | 'object'>):
 function parseRtonIntegerText(text: string, kind: RtonIntegerKind) {
   const trimmed = text.trim();
   if (!/^[+-]?\d+$/.test(trimmed)) {
-    throw new Error(`${kind} 需要整数`);
+    throw new Error(translate('error.integerRequired', { kind }));
   }
 
   const value = BigInt(trimmed);
   const [min, max] = RTON_INTEGER_RANGES[kind];
   if (value < min || value > max) {
-    throw new Error(`${kind} 超出范围：${min.toString()}..${max.toString()}`);
+    throw new Error(translate('error.integerOutOfRange', { kind, min: min.toString(), max: max.toString() }));
   }
   return value.toString();
 }
@@ -3700,7 +3748,7 @@ function parseRtonFloatText(text: string) {
 
   const value = Number(text);
   if (Number.isNaN(value)) {
-    throw new Error('浮点值需要 number / inf / -inf / nan');
+    throw new Error(translate('error.floatRequired'));
   }
   return value;
 }
@@ -3726,7 +3774,7 @@ function replaceRtonValueAtPath(root: RtonValue, path: RtonValuePath, nextValue:
   const [head, ...tail] = path;
   if (head.kind === 'array') {
     if (root.kind !== 'array' || head.index < 0 || head.index >= root.items.length) {
-      throw new Error('RtonValue 路径已失效');
+      throw new Error(translate('error.valuePathInvalid'));
     }
     const items = [...root.items];
     items[head.index] = replaceRtonValueAtPath(items[head.index], tail, nextValue);
@@ -3734,7 +3782,7 @@ function replaceRtonValueAtPath(root: RtonValue, path: RtonValuePath, nextValue:
   }
 
   if (root.kind !== 'object' || head.index < 0 || head.index >= root.entries.length) {
-    throw new Error('RtonValue 路径已失效');
+    throw new Error(translate('error.valuePathInvalid'));
   }
   const entries = [...root.entries];
   const entry = entries[head.index];
@@ -4468,6 +4516,7 @@ function buildLoadedFileItems({
   sourceBytes,
   viewMode,
   editorSurface,
+  t,
 }: {
   files: LoadedRtonFile[];
   tabs: EditorTab[];
@@ -4476,6 +4525,7 @@ function buildLoadedFileItems({
   sourceBytes: Uint8Array | null;
   viewMode: ViewMode;
   editorSurface: EditorSurface;
+  t: Translator;
 }): LoadedFileTreeItem[] {
   const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
   const linkedTabIds = new Set(files.flatMap((file) => (file.tabId === null ? [] : [file.tabId])));
@@ -4494,7 +4544,9 @@ function buildLoadedFileItems({
       tabId: tab?.id ?? null,
       path,
       name: parts.at(-1) ?? path,
-      detail: tab && mode ? `${bytes ? formatBytes(bytes.byteLength) : formatBytes(file.file.size)} · ${surface === 'hex' ? 'RTON' : mode.toUpperCase()}` : `${formatBytes(file.file.size)} · ${kindLabel} · 未打开`,
+      detail: tab && mode
+        ? `${bytes ? formatBytes(bytes.byteLength) : formatBytes(file.file.size)} · ${surface === 'hex' ? 'RTON' : mode.toUpperCase()}`
+        : t('fileList.closedDetail', { size: formatBytes(file.file.size), kind: kindLabel }),
       active,
     };
   });
@@ -4508,7 +4560,7 @@ function buildLoadedFileItems({
       tabId: tab.id,
       path,
       name: parts.at(-1) ?? path,
-      detail: `${active ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : '文本') : (tab.sourceBytes ? formatBytes(tab.sourceBytes.byteLength) : '文本')} · ${(active ? editorSurface : tab.editorSurface) === 'hex' ? 'RTON' : (active ? viewMode : tab.viewMode).toUpperCase()}`,
+      detail: `${active ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : t('app.textInput')) : (tab.sourceBytes ? formatBytes(tab.sourceBytes.byteLength) : t('app.textInput'))} · ${(active ? editorSurface : tab.editorSurface) === 'hex' ? 'RTON' : (active ? viewMode : tab.viewMode).toUpperCase()}`,
       active,
     };
   });
@@ -4684,13 +4736,14 @@ function sameNullableRtonEncoding(left: RtonBinaryEncoding | null, right: RtonBi
   return left !== null && sameRtonEncoding(left, right);
 }
 
-function formatRtonEncoding(encoding: RtonBinaryEncoding) {
-  return `${encoding.compact ? 'Compact' : 'Standard'}${encoding.encrypted ? ' · 加密' : ''}`;
+function formatRtonEncoding(encoding: RtonBinaryEncoding, t?: Translator) {
+  const encryptedLabel = t ? t('toolbar.encrypted') : translate('toolbar.encrypted');
+  return `${encoding.compact ? 'Compact' : 'Standard'}${encoding.encrypted ? ` · ${encryptedLabel}` : ''}`;
 }
 
-function encodeCurrentRtonBytes(value: RtonValue | null, compact: boolean, encrypted: boolean, parseError: string | null) {
+function encodeCurrentRtonBytes(value: RtonValue | null, compact: boolean, encrypted: boolean, parseError: string | null, t: Translator = translate) {
   if (!value) {
-    throw new Error(parseError ?? '当前内容还没有可用的 RTON Value');
+    throw new Error(parseError ?? t('status.noSearchableValue'));
   }
   return encodeRtonOutputBytes(value, compact, encrypted);
 }
@@ -4708,19 +4761,23 @@ function encodeRtonOutputBytes(value: RtonValue, compact: boolean, encrypted: bo
   return encrypted ? encrypt_rton_data(bytes) : bytes;
 }
 
-function jsonPreviewUnavailableText(message: string) {
-  return `JSON 预览不可用\n\n${message}`;
+function jsonPreviewUnavailableText(message: string, t: Translator = translate) {
+  return t('format.previewUnavailableText', { label: 'JSON', message });
 }
 
 function isPendingTextPreview(text: string) {
-  return text.startsWith('正在后台生成 ') && text.endsWith(' 预览...');
+  return text === translate('format.generatingPreviewText', { label: 'JSON' })
+    || text === translate('format.generatingPreviewText', { label: 'YAML' })
+    || text === translate('format.generatingPreviewText', { label: 'TOML' })
+    || (text.startsWith('正在后台生成 ') && text.endsWith(' 预览...'))
+    || (text.startsWith('Generating ') && text.endsWith(' preview in the background...'));
 }
 
 function rtonValueToJsonValue(value: RtonValue) {
   return rtonValueToPlain(value) as JsonValue;
 }
 
-function decodeRtonSourceValue(bytes: Uint8Array, renderJsonPreview = true) {
+function decodeRtonSourceValue(bytes: Uint8Array, renderJsonPreview = true, t: Translator = translate) {
   const encrypted = isEncryptedRtonBytes(bytes);
   const plainBytes = encrypted ? decrypt_rton_data(bytes) : bytes;
   const compact = isCompactRtonBytes(plainBytes);
@@ -4730,14 +4787,14 @@ function decodeRtonSourceValue(bytes: Uint8Array, renderJsonPreview = true) {
   if (renderJsonPreview) {
     try {
       editorText = value_to_json_text(wire, true);
-      surfaceNote = 'JSON 可编辑';
+      surfaceNote = t('format.jsonEditable');
     } catch (error) {
-      editorText = jsonPreviewUnavailableText(errorMessage(error));
-      surfaceNote = 'JSON 预览不可用';
+      editorText = jsonPreviewUnavailableText(errorMessage(error), t);
+      surfaceNote = t('format.jsonPreviewUnavailable');
     }
   } else {
     editorText = '';
-    surfaceNote = 'JSON 未生成';
+    surfaceNote = t('format.jsonNotGenerated');
   }
 
   return {
@@ -4753,26 +4810,27 @@ async function decodeLoadableSource(
   candidate: LoadableFileCandidate,
   preferredViewMode: ViewMode = 'json',
   preferredEditorSurface: EditorSurface = 'hex',
+  t: Translator = translate,
 ) {
   if (candidate.kind === 'rton') {
     const bytes = new Uint8Array(await candidate.file.arrayBuffer());
     const useHexSurface = preferredEditorSurface === 'hex';
-	    const { value, encrypted, compact } = decodeRtonSourceValue(bytes, false);
+	    const { value, encrypted, compact } = decodeRtonSourceValue(bytes, false, t);
 	    const binaryEncoding = { compact, encrypted };
     const label = loadableFileKindLabel(preferredViewMode);
-    const editorText = useHexSurface ? '' : `正在后台生成 ${label} 预览...`;
-    const textSurfaceNote = useHexSurface ? `${label} 未生成` : `正在生成 ${label} 预览`;
+    const editorText = useHexSurface ? '' : t('format.generatingPreviewText', { label });
+    const textSurfaceNote = useHexSurface ? t('app.notGenerated') : t('format.generatingPreview', { label });
     if (preferredViewMode === 'json') {
       return {
         value,
         editorText,
-        surfaceNote: useHexSurface ? 'RTON 可编辑' : textSurfaceNote,
+        surfaceNote: useHexSurface ? t('format.rtonEditable') : textSurfaceNote,
 	        sourceBytes: bytes,
 	        binaryBytes: bytes,
 	        binaryEncoding,
 	        viewMode: 'json' as const,
         editorSurface: useHexSurface ? ('hex' as const) : ('text' as const),
-        status: { message: encrypted ? '加密 RTON 已解密并解析' : 'RTON 已解析', tone: 'ok' as const },
+        status: { message: encrypted ? t('status.encryptedRtonParsed') : t('format.parsed', { label: 'RTON' }), tone: 'ok' as const },
         needsTextPreview: !useHexSurface,
       };
     }
@@ -4781,7 +4839,7 @@ async function decodeLoadableSource(
 	    let preferredSurfaceNote: string;
 	    if (useHexSurface) {
 	      preferredEditorText = '';
-	      preferredSurfaceNote = `${label} 未生成`;
+	      preferredSurfaceNote = t('app.notGenerated');
 	    } else {
 	      preferredEditorText = editorText;
 	      preferredSurfaceNote = textSurfaceNote;
@@ -4790,13 +4848,13 @@ async function decodeLoadableSource(
     return {
       value,
       editorText: preferredEditorText,
-      surfaceNote: useHexSurface ? 'RTON 可编辑' : preferredSurfaceNote,
+      surfaceNote: useHexSurface ? t('format.rtonEditable') : preferredSurfaceNote,
 	      sourceBytes: bytes,
 	      binaryBytes: bytes,
 	      binaryEncoding,
 		      viewMode: preferredViewMode,
 	      editorSurface: useHexSurface ? ('hex' as const) : ('text' as const),
-	      status: { message: encrypted ? '加密 RTON 已解密并解析' : 'RTON 已解析', tone: 'ok' as const },
+	      status: { message: encrypted ? t('status.encryptedRtonParsed') : t('format.parsed', { label: 'RTON' }), tone: 'ok' as const },
 	      needsTextPreview: !useHexSurface,
 	    };
   }
@@ -4806,13 +4864,13 @@ async function decodeLoadableSource(
     return {
       value: parseJsonTextToRtonValue(text),
       editorText: text,
-      surfaceNote: 'JSON 可编辑',
+      surfaceNote: t('format.jsonEditable'),
 	      sourceBytes: null,
 	      binaryBytes: null,
 	      binaryEncoding: null,
 	      viewMode: 'json' as const,
       editorSurface: 'text' as const,
-      status: { message: 'JSON 已解析', tone: 'ok' as const },
+      status: { message: t('format.parsed', { label: 'JSON' }), tone: 'ok' as const },
     };
   }
 
@@ -4822,13 +4880,13 @@ async function decodeLoadableSource(
   return {
     value,
     editorText: text,
-    surfaceNote: `${label} 可编辑`,
+    surfaceNote: t('format.editable', { label }),
 	    sourceBytes: null,
 	    binaryBytes: null,
 	    binaryEncoding: null,
 	    viewMode: candidate.kind,
     editorSurface: 'text' as const,
-    status: { message: `${label} 已解析`, tone: 'ok' as const },
+    status: { message: t('format.parsed', { label }), tone: 'ok' as const },
   };
 }
 
@@ -4879,12 +4937,12 @@ async function resolveBatchItemValue(
   if (item.fileId !== null) {
     const entry = context.filesById.get(item.fileId);
     if (!entry) {
-      throw new Error('文件列表项已失效');
+      throw new Error(translate('status.fileListItemStale'));
     }
     return (await decodeLoadableSource(entry)).value;
   }
 
-  throw new Error('当前标签页没有可导出的 RtonValue');
+  throw new Error(translate('status.noExportValue'));
 }
 
 function convertRtonValueForBatch(
@@ -5167,18 +5225,18 @@ function createEditorTabFromValue({
 	  viewMode?: ViewMode;
   editorSurface?: EditorSurface;
   status: StatusState;
-}): EditorTab {
+}, t: Translator = translate): EditorTab {
   try {
 	    const plainValue = rtonValueToJsonValue(value);
 	    const actualBinaryBytes = binaryBytes ?? sourceBytes;
 	    let text = editorText;
-    let note = surfaceNote ?? `${viewMode.toUpperCase()} 可编辑`;
+    let note = surfaceNote ?? t('format.editable', { label: viewMode.toUpperCase() });
     if (text === undefined) {
       try {
         text = rtonValueToJsonText(value, true);
       } catch (error) {
-        text = jsonPreviewUnavailableText(errorMessage(error));
-        note = 'JSON 预览不可用';
+        text = jsonPreviewUnavailableText(errorMessage(error), t);
+        note = t('format.jsonPreviewUnavailable');
       }
     }
 
@@ -5218,7 +5276,7 @@ function createEditorTabFromValue({
       stats: emptyStats(),
       viewMode,
 	      editorSurface: editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text',
-      surfaceNote: surfaceNote ?? `${viewMode.toUpperCase()} 解析失败`,
+      surfaceNote: surfaceNote ?? t('format.parseFailed', { label: viewMode.toUpperCase(), message }),
       searchQuery: '',
       searchState: { kind: 'message', message },
       status: { message, tone: 'error' },

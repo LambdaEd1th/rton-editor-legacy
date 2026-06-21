@@ -1,0 +1,456 @@
+type MessageDict = Record<string, string>;
+
+export type I18nParams = Record<string, string | number>;
+export type Translator = (key: string, params?: I18nParams) => string;
+
+const messages: Record<string, MessageDict> = {
+  'zh-CN': {
+    'app.emptyFile': '未打开文件',
+    'app.waitingFile': '等待文件',
+    'app.noOutput': '无',
+    'app.notGenerated': '未生成',
+    'app.textInput': '文本',
+    'app.output': '输出',
+    'app.rawBytes': 'raw bytes',
+    'app.rtonUnavailable': 'RTON 不可用',
+
+    'toolbar.file': '文件',
+    'toolbar.openFile': '打开文件',
+    'toolbar.openFolder': '打开文件夹',
+    'toolbar.sample': '样例',
+    'toolbar.textFormat': '文本格式',
+    'toolbar.textExport': '文本导出',
+    'toolbar.rtonExport': 'RTON 导出',
+    'toolbar.preferences': '偏好',
+    'toolbar.compact': 'Compact',
+    'toolbar.encrypted': '加密',
+    'toolbar.validate': '验证',
+    'toolbar.theme': '主题',
+    'toolbar.language': '语言',
+    'toolbar.lineWrap': '自动换行',
+    'toolbar.searchPanel': '搜索栏',
+    'toolbar.chooseTheme': '选择主题',
+    'toolbar.chooseLanguage': '选择语言',
+    'toolbar.moveGroup': '拖动移动工具栏分组：{label}',
+
+    'theme.system': '跟随系统',
+    'theme.light': '浅色',
+    'theme.dark': '深色',
+    'lang.zhCN': '中文',
+    'lang.en': 'English',
+
+    'fileList.title': '文件列表',
+    'fileList.loadedFiles': '已加载文件',
+    'fileList.selectAll': '全选',
+    'fileList.selectNone': '全不选',
+    'fileList.searchPlaceholder': '搜索文件',
+    'fileList.clearSearch': '清除文件搜索',
+    'fileList.noMatches': '没有匹配的文件',
+    'fileList.selectedCount': '已选 {selected} / {total} 个文件',
+    'fileList.matchCount': '匹配 {visible} / {total} 个文件 · 已选 {selected}',
+    'fileList.fileCount': '{count} 个文件',
+    'fileList.selectPath': '选择 {path}',
+    'fileList.closedDetail': '{size} · {kind} · 未打开',
+
+    'drop.title': '拖放文件或文件夹到此处加载',
+    'drop.subtitle': '支持 {hint}，文件夹会保留相对路径',
+
+    'panel.fileProperties': '文件属性',
+    'panel.currentFile': '当前文件',
+    'panel.name': '名称',
+    'panel.input': '输入',
+    'panel.output': '输出',
+    'panel.stats': '统计',
+    'panel.nodes': '节点',
+    'panel.objects': '对象',
+    'panel.arrays': '数组',
+    'panel.depth': '深度',
+    'panel.index': '索引',
+    'panel.search': '搜索',
+    'panel.clearIndexSearch': '清除索引搜索',
+    'panel.hexUnavailable': '不可用：{message}',
+    'panel.hexGenerating': '{encoding} 生成中',
+    'panel.hexNotGenerated': '未生成',
+    'panel.hexOnlyRton': '仅 RTON Hex 视图可用',
+
+    'tabs.openFiles': '已打开文件',
+    'tabs.switchTo': '切换到 {name}',
+    'tabs.close': '关闭此文件',
+
+    'resize.fileList': '调整文件列表宽度',
+    'resize.fileProperties': '调整文件属性宽度',
+
+    'inspector.noMatches': '没有匹配',
+    'inspector.searchingScanned': '搜索中... 已扫描 {count} 个节点',
+    'inspector.capped': '显示前 {limit} 条匹配，请继续输入以缩小范围',
+    'inspector.doneSummary': '{matches} 条匹配，扫描 {scanned} 个节点',
+    'inspector.searchingSummary': '{matches} 条匹配，仍在搜索...',
+    'inspector.noValue': '没有可浏览的 RtonValue',
+    'inspector.truncated': '仅显示前 {shown} 项，共 {total} 项。请用搜索定位更深内容。',
+    'inspector.chooseValueType': '选择 RtonValue 类型',
+    'inspector.chooseBool': '选择布尔值',
+
+    'status.wasmInitializing': 'wasm 初始化中',
+    'status.wasmReady': 'wasm 就绪，等待文件',
+    'status.wasmStillLoading': 'wasm 仍在初始化',
+    'status.openFileFirst': '请先打开文件',
+    'status.noOpenFiles': '没有打开的文件',
+    'status.noSearchableValue': '没有可搜索的 RtonValue',
+    'status.searching': '搜索 "{query}"...',
+    'status.generatingHex': '正在后台生成 {encoding} Hex',
+    'status.hexGenerated': '{encoding} Hex 已生成，用时 {duration}',
+    'status.hexFailed': '{encoding} Hex 生成失败：{message}',
+    'status.hexWorkerError': 'Hex 转换 worker 出错',
+    'status.hexWorkerUnreadable': 'Hex 转换 worker 返回了无法读取的数据',
+    'status.formatWorkerError': '后台格式化 worker 出错',
+    'status.formatWorkerUnreadable': '后台格式化 worker 返回了无法读取的数据',
+    'status.noJumpBytes': '当前没有可跳转的 RTON 字节',
+    'status.encryptedOffsetUnavailable': '当前显示的是加密 RTON 密文字节，无法按解密后的结构跳转 offset',
+    'status.offsetNotFound': '未找到对应 RTON offset',
+    'status.jumpedOffset': '已跳转到 offset 0x{offset}',
+    'status.textLineNotFound': '未找到对应文本行',
+    'status.jumpedLine': '已跳转到第 {line} 行',
+    'status.folderPickerSafari': 'Safari 不支持点击选择文件夹，请把文件夹拖到页面中加载',
+    'status.folderPickerDenied': '浏览器拒绝打开目录选择器，请把文件夹拖到页面中加载',
+    'status.selectFilesFirst': '请先在左侧文件列表选择文件',
+    'status.indexedFiles': '已索引 {count} 个文件{suffix}，点击左侧文件加载',
+    'status.skippedFiles': '，跳过 {count} 个不支持的文件',
+    'status.parsingPath': '正在解析 {path}',
+    'status.noLoadableFiles': '未找到 {hint} 文件',
+    'status.loadedFiles': '已载入 {count} 个文件{suffix}',
+    'status.sampleLoaded': '样例已载入',
+    'status.readonlyHexPreview': '当前 Hex 是按 Compact/加密选项生成的只读预览，请切回原始形态后编辑 bytes',
+    'status.rtonBinaryGenerated': '已从当前 RtonValue 生成二进制 RTON，可直接编辑字节',
+    'status.rtonUpdated': 'RTON 已更新，{prefix}RTON 解析成功',
+    'status.rtonUpdateFailed': 'RTON 已更新，但 RTON 解析失败：{message}',
+    'status.encryptedRtonParsed': '加密 RTON 已解密并解析',
+    'status.batchConverting': '正在批量转换 {count} 个文件为 {format}',
+    'status.noBatchSuccess': '没有文件转换成功',
+    'status.batchFailureSuffix': '，{count} 个失败',
+    'status.batchExported': '已批量导出 {count} 个 {format}{suffix}',
+    'status.rtonValueUpdated': 'RtonValue 已更新',
+    'status.rtonValueUpdatedNoJson': 'RtonValue 已更新，JSON 预览不可用',
+    'status.fileListItemStale': '文件列表项已失效',
+    'status.noExportValue': '当前标签页没有可导出的 RtonValue',
+    'error.integerRequired': '{kind} 需要整数',
+    'error.integerOutOfRange': '{kind} 超出范围：{min}..{max}',
+    'error.floatRequired': '浮点值需要 number / inf / -inf / nan',
+    'error.valuePathInvalid': 'RtonValue 路径已失效',
+
+    'format.previewUnavailableText': '{label} 预览不可用\n\n{message}',
+    'format.previewUnavailable': '{label} 预览不可用',
+    'format.previewFailed': '{label} 预览失败：{message}',
+    'format.parseFailed': '{label} 解析失败：{message}',
+    'format.formatTimeout': '{label} 生成预览超时，已停止后台任务。这个文件可能过大，或当前格式转换库处理该结构太慢。',
+    'format.parseTimeout': '{label} 解析超时，已停止后台任务。这个文件可能过大，或当前格式转换库处理该结构太慢。',
+    'format.previewTruncated': '{label} 预览已截断',
+    'format.generatedTruncated': '{label} 预览已生成并截断',
+    'format.editable': '{label} 可编辑',
+    'format.generated': '{label} 已生成',
+    'format.parsed': '{label} 已解析',
+    'format.generatingPreview': '正在生成 {label} 预览',
+    'format.generatingPreviewText': '正在后台生成 {label} 预览...',
+    'format.unparseablePreview': '{label} 预览不可用\n\n当前内容无法解析：{message}',
+    'format.noValuePreview': '{label} 预览不可用\n\n当前内容还没有可用的 RTON Value',
+    'format.parsing': '正在解析 {label}',
+    'format.waitJsonParse': '等待 JSON 解析',
+    'format.waitParse': '等待 {label} 解析',
+    'format.editing': '{label} 编辑中',
+    'format.jsonCannotConvert': '当前内容无法转换为 JSON：{message}',
+    'format.jsonPreviewUnavailable': 'JSON 预览不可用',
+    'format.jsonEditable': 'JSON 可编辑',
+    'format.jsonNotGenerated': 'JSON 未生成',
+    'format.rtonEditable': 'RTON 可编辑',
+    'format.rtonParseUnavailable': 'RTON 无法解析',
+    'format.exportable': '{label} 可导出',
+
+    'hex.empty': '没有可编辑的字节',
+    'hex.readOnly': '只读',
+    'hex.insert': '插入',
+    'hex.overwrite': '覆写',
+    'hex.searchMode': '搜索模式',
+    'hex.searchHex': '搜索 HEX',
+    'hex.searchAscii': '搜索 ASCII',
+    'hex.previous': '上一个',
+    'hex.next': '下一个',
+    'hex.caseSensitive': '大小写',
+    'hex.replaceHex': '替换 HEX',
+    'hex.replaceAscii': '替换 ASCII',
+    'hex.replace': '替换',
+    'hex.replaceAll': '全部替换',
+    'hex.closeSearch': '关闭搜索栏',
+    'hex.typeSearch': '输入搜索内容',
+    'hex.searching': '搜索中...',
+    'hex.searchingMatches': '搜索中 · {count} 个匹配',
+    'hex.noMatches': '无匹配',
+    'hex.matches': '{count} 个匹配',
+    'hex.enterHex': '请输入 HEX',
+    'hex.hexChars': 'HEX 只能包含 0-9/A-F',
+    'hex.hexEven': 'HEX 长度必须为偶数',
+    'hex.enterAscii': '请输入 ASCII',
+    'hex.asciiChars': 'ASCII 只能使用 0-255 字符',
+  },
+
+  en: {
+    'app.emptyFile': 'No file open',
+    'app.waitingFile': 'Waiting for file',
+    'app.noOutput': 'None',
+    'app.notGenerated': 'Not generated',
+    'app.textInput': 'Text',
+    'app.output': 'Output',
+    'app.rawBytes': 'raw bytes',
+    'app.rtonUnavailable': 'RTON unavailable',
+
+    'toolbar.file': 'File',
+    'toolbar.openFile': 'Open File',
+    'toolbar.openFolder': 'Open Folder',
+    'toolbar.sample': 'Sample',
+    'toolbar.textFormat': 'Text Format',
+    'toolbar.textExport': 'Text Export',
+    'toolbar.rtonExport': 'RTON Export',
+    'toolbar.preferences': 'Preferences',
+    'toolbar.compact': 'Compact',
+    'toolbar.encrypted': 'Encrypted',
+    'toolbar.validate': 'Validate',
+    'toolbar.theme': 'Theme',
+    'toolbar.language': 'Language',
+    'toolbar.lineWrap': 'Line wrap',
+    'toolbar.searchPanel': 'Search panel',
+    'toolbar.chooseTheme': 'Choose theme',
+    'toolbar.chooseLanguage': 'Choose language',
+    'toolbar.moveGroup': 'Drag to move toolbar group: {label}',
+
+    'theme.system': 'System',
+    'theme.light': 'Light',
+    'theme.dark': 'Dark',
+    'lang.zhCN': 'Chinese',
+    'lang.en': 'English',
+
+    'fileList.title': 'File List',
+    'fileList.loadedFiles': 'Loaded files',
+    'fileList.selectAll': 'All',
+    'fileList.selectNone': 'None',
+    'fileList.searchPlaceholder': 'Search files',
+    'fileList.clearSearch': 'Clear file search',
+    'fileList.noMatches': 'No matching files',
+    'fileList.selectedCount': 'Selected {selected} / {total} files',
+    'fileList.matchCount': 'Matched {visible} / {total} files · selected {selected}',
+    'fileList.fileCount': '{count} files',
+    'fileList.selectPath': 'Select {path}',
+    'fileList.closedDetail': '{size} · {kind} · unopened',
+
+    'drop.title': 'Drop files or folders here',
+    'drop.subtitle': 'Supports {hint}; folders keep relative paths',
+
+    'panel.fileProperties': 'File Properties',
+    'panel.currentFile': 'Current file',
+    'panel.name': 'Name',
+    'panel.input': 'Input',
+    'panel.output': 'Output',
+    'panel.stats': 'Stats',
+    'panel.nodes': 'Nodes',
+    'panel.objects': 'Objects',
+    'panel.arrays': 'Arrays',
+    'panel.depth': 'Depth',
+    'panel.index': 'Index',
+    'panel.search': 'Search',
+    'panel.clearIndexSearch': 'Clear index search',
+    'panel.hexUnavailable': 'Unavailable: {message}',
+    'panel.hexGenerating': '{encoding} generating',
+    'panel.hexNotGenerated': 'Not generated',
+    'panel.hexOnlyRton': 'Only available in RTON Hex view',
+
+    'tabs.openFiles': 'Open files',
+    'tabs.switchTo': 'Switch to {name}',
+    'tabs.close': 'Close this file',
+
+    'resize.fileList': 'Resize file list',
+    'resize.fileProperties': 'Resize file properties',
+
+    'inspector.noMatches': 'No matches',
+    'inspector.searchingScanned': 'Searching... scanned {count} nodes',
+    'inspector.capped': 'Showing first {limit} matches; keep typing to narrow results',
+    'inspector.doneSummary': '{matches} matches, scanned {scanned} nodes',
+    'inspector.searchingSummary': '{matches} matches, still searching...',
+    'inspector.noValue': 'No browsable RtonValue',
+    'inspector.truncated': 'Showing first {shown} of {total} items. Use search to locate deeper content.',
+    'inspector.chooseValueType': 'Choose RtonValue type',
+    'inspector.chooseBool': 'Choose boolean value',
+
+    'status.wasmInitializing': 'Initializing wasm',
+    'status.wasmReady': 'wasm ready, waiting for file',
+    'status.wasmStillLoading': 'wasm is still initializing',
+    'status.openFileFirst': 'Open a file first',
+    'status.noOpenFiles': 'No open files',
+    'status.noSearchableValue': 'No searchable RtonValue',
+    'status.searching': 'Searching "{query}"...',
+    'status.generatingHex': 'Generating {encoding} Hex in the background',
+    'status.hexGenerated': '{encoding} Hex generated in {duration}',
+    'status.hexFailed': '{encoding} Hex failed: {message}',
+    'status.hexWorkerError': 'Hex conversion worker failed',
+    'status.hexWorkerUnreadable': 'Hex conversion worker returned unreadable data',
+    'status.formatWorkerError': 'Background formatting worker failed',
+    'status.formatWorkerUnreadable': 'Background formatting worker returned unreadable data',
+    'status.noJumpBytes': 'No RTON bytes to jump through',
+    'status.encryptedOffsetUnavailable': 'Encrypted RTON bytes cannot be mapped to decoded structure offsets',
+    'status.offsetNotFound': 'Matching RTON offset not found',
+    'status.jumpedOffset': 'Jumped to offset 0x{offset}',
+    'status.textLineNotFound': 'Matching text line not found',
+    'status.jumpedLine': 'Jumped to line {line}',
+    'status.folderPickerSafari': 'Safari cannot open folders from this button; drop the folder onto the page instead',
+    'status.folderPickerDenied': 'The browser blocked the directory picker; drop the folder onto the page instead',
+    'status.selectFilesFirst': 'Select files in the left file list first',
+    'status.indexedFiles': 'Indexed {count} files{suffix}; click a file on the left to load it',
+    'status.skippedFiles': ', skipped {count} unsupported files',
+    'status.parsingPath': 'Parsing {path}',
+    'status.noLoadableFiles': 'No {hint} files found',
+    'status.loadedFiles': 'Loaded {count} files{suffix}',
+    'status.sampleLoaded': 'Sample loaded',
+    'status.readonlyHexPreview': 'This Hex view is a read-only preview generated from the Compact/encrypted options; switch back to the original byte form to edit',
+    'status.rtonBinaryGenerated': 'Generated binary RTON from the current RtonValue; bytes are editable',
+    'status.rtonUpdated': 'RTON updated; {prefix}RTON parsed successfully',
+    'status.rtonUpdateFailed': 'RTON updated, but parsing failed: {message}',
+    'status.encryptedRtonParsed': 'Encrypted RTON decrypted and parsed',
+    'status.batchConverting': 'Converting {count} files to {format}',
+    'status.noBatchSuccess': 'No files were converted',
+    'status.batchFailureSuffix': ', {count} failed',
+    'status.batchExported': 'Exported {count} {format} files{suffix}',
+    'status.rtonValueUpdated': 'RtonValue updated',
+    'status.rtonValueUpdatedNoJson': 'RtonValue updated; JSON preview unavailable',
+    'status.fileListItemStale': 'File list item is stale',
+    'status.noExportValue': 'The current tab has no exportable RtonValue',
+    'error.integerRequired': '{kind} requires an integer',
+    'error.integerOutOfRange': '{kind} is out of range: {min}..{max}',
+    'error.floatRequired': 'Floating values require number / inf / -inf / nan',
+    'error.valuePathInvalid': 'RtonValue path is stale',
+
+    'format.previewUnavailableText': '{label} preview unavailable\n\n{message}',
+    'format.previewUnavailable': '{label} preview unavailable',
+    'format.previewFailed': '{label} preview failed: {message}',
+    'format.parseFailed': '{label} parse failed: {message}',
+    'format.formatTimeout': '{label} preview timed out, so the background task was stopped. This file may be too large, or the conversion library is too slow for this structure.',
+    'format.parseTimeout': '{label} parse timed out, so the background task was stopped. This file may be too large, or the conversion library is too slow for this structure.',
+    'format.previewTruncated': '{label} preview truncated',
+    'format.generatedTruncated': '{label} preview generated and truncated',
+    'format.editable': '{label} editable',
+    'format.generated': '{label} generated',
+    'format.parsed': '{label} parsed',
+    'format.generatingPreview': 'Generating {label} preview',
+    'format.generatingPreviewText': 'Generating {label} preview in the background...',
+    'format.unparseablePreview': '{label} preview unavailable\n\nCurrent content cannot be parsed: {message}',
+    'format.noValuePreview': '{label} preview unavailable\n\nCurrent content has no available RTON Value',
+    'format.parsing': 'Parsing {label}',
+    'format.waitJsonParse': 'Waiting for JSON parse',
+    'format.waitParse': 'Waiting for {label} parse',
+    'format.editing': 'Editing {label}',
+    'format.jsonCannotConvert': 'Current content cannot be converted to JSON: {message}',
+    'format.jsonPreviewUnavailable': 'JSON preview unavailable',
+    'format.jsonEditable': 'JSON editable',
+    'format.jsonNotGenerated': 'JSON not generated',
+    'format.rtonEditable': 'RTON editable',
+    'format.rtonParseUnavailable': 'RTON cannot be parsed',
+    'format.exportable': '{label} exportable',
+
+    'hex.empty': 'No editable bytes',
+    'hex.readOnly': 'Read only',
+    'hex.insert': 'Insert',
+    'hex.overwrite': 'Overwrite',
+    'hex.searchMode': 'Search mode',
+    'hex.searchHex': 'Search HEX',
+    'hex.searchAscii': 'Search ASCII',
+    'hex.previous': 'Previous',
+    'hex.next': 'Next',
+    'hex.caseSensitive': 'Case',
+    'hex.replaceHex': 'Replace HEX',
+    'hex.replaceAscii': 'Replace ASCII',
+    'hex.replace': 'Replace',
+    'hex.replaceAll': 'Replace all',
+    'hex.closeSearch': 'Close search panel',
+    'hex.typeSearch': 'Type to search',
+    'hex.searching': 'Searching...',
+    'hex.searchingMatches': 'Searching · {count} matches',
+    'hex.noMatches': 'No matches',
+    'hex.matches': '{count} matches',
+    'hex.enterHex': 'Enter HEX',
+    'hex.hexChars': 'HEX can only contain 0-9/A-F',
+    'hex.hexEven': 'HEX length must be even',
+    'hex.enterAscii': 'Enter ASCII',
+    'hex.asciiChars': 'ASCII can only use 0-255 characters',
+  },
+};
+
+const STORAGE_KEY = 'rton-editor-lang';
+let currentLang = readInitialLang();
+const changeCallbacks: Array<(lang: string) => void> = [];
+
+applyDocumentLanguage(currentLang);
+
+function readInitialLang(): string {
+  if (typeof localStorage !== 'undefined') {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved && messages[saved]) {
+      return saved;
+    }
+  }
+  return detectLang();
+}
+
+function detectLang(): string {
+  if (typeof navigator === 'undefined') {
+    return 'en';
+  }
+  const nav = navigator.language || 'en';
+  return nav.startsWith('zh') ? 'zh-CN' : 'en';
+}
+
+function applyDocumentLanguage(lang: string): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  document.documentElement.lang = lang === 'zh-CN' ? 'zh-CN' : 'en';
+}
+
+export const t: Translator = (key, params) => {
+  const dict = messages[currentLang] || messages.en;
+  let text = dict[key] ?? messages.en[key] ?? key;
+  if (params) {
+    for (const [paramKey, value] of Object.entries(params)) {
+      text = text.replaceAll(`{${paramKey}}`, String(value));
+    }
+  }
+  return text;
+};
+
+export function getLang(): string {
+  return currentLang;
+}
+
+export function setLang(lang: string): void {
+  if (!messages[lang] || lang === currentLang) {
+    return;
+  }
+  currentLang = lang;
+  localStorage.setItem(STORAGE_KEY, lang);
+  applyDocumentLanguage(lang);
+  for (const callback of changeCallbacks) {
+    callback(lang);
+  }
+}
+
+export function onLangChange(callback: (lang: string) => void): () => void {
+  changeCallbacks.push(callback);
+  return () => {
+    const index = changeCallbacks.indexOf(callback);
+    if (index !== -1) {
+      changeCallbacks.splice(index, 1);
+    }
+  };
+}
+
+export function getAvailableLangs(): string[] {
+  return Object.keys(messages);
+}
+
+export function getLangLabel(lang: string): string {
+  return lang === 'zh-CN' ? t('lang.zhCN') : t('lang.en');
+}
