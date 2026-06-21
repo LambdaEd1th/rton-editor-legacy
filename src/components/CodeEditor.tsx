@@ -9,7 +9,7 @@ import { closeSearchPanel, openSearchPanel, searchPanelOpen as isSearchPanelOpen
 import { Compartment, Prec, type Extension } from '@codemirror/state';
 import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
-import { eventTargetsElement, isFindShortcut, isRedoShortcut, isUndoShortcut } from './keyboard-shortcuts';
+import { registerEditorShortcutOwner } from './keyboard-shortcuts';
 
 type EditorMode = 'json' | 'yaml' | 'toml';
 
@@ -306,78 +306,14 @@ export function CodeEditor({
   }, [onSearchPanelVisibleChange]);
 
   useEffect(() => {
-    const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) {
-        return;
-      }
-      if (!eventTargetsElement(hostRef.current, event)) {
-        return;
-      }
-
-      const view = viewRef.current;
-      if (!view) {
-        return;
-      }
-
-      if (isFindShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        openCodeMirrorSearchPanel(view, hostRef.current);
-        searchPanelVisibleRef.current = true;
-        onSearchPanelVisibleChangeRef.current(true);
-      } else if (isUndoShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        undo(view);
-      } else if (isRedoShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        redo(view);
-      }
-    };
-
-    window.addEventListener('keydown', handleFindShortcut, true);
-    document.addEventListener('keydown', handleFindShortcut, true);
-    return () => {
-      window.removeEventListener('keydown', handleFindShortcut, true);
-      document.removeEventListener('keydown', handleFindShortcut, true);
-    };
-  }, []);
-
-  useEffect(() => {
-    const handleHistoryInput = (event: InputEvent) => {
-      if (event.defaultPrevented || !eventTargetsElement(hostRef.current, event)) {
-        return;
-      }
-
-      const view = viewRef.current;
-      if (!view) {
-        return;
-      }
-
-      if (event.inputType === 'historyUndo') {
-        event.preventDefault();
-        event.stopPropagation();
-        undo(view);
-      } else if (event.inputType === 'historyRedo') {
-        event.preventDefault();
-        event.stopPropagation();
-        redo(view);
-      }
-    };
-
-    document.addEventListener('beforeinput', handleHistoryInput, true);
-    return () => document.removeEventListener('beforeinput', handleHistoryInput, true);
-  }, []);
-
-  useEffect(() => {
-    if (!hostRef.current) {
+    const host = hostRef.current;
+    if (!host) {
       return;
     }
 
     const view = new EditorView({
       doc: value,
-      parent: hostRef.current,
+      parent: host,
       extensions: [
         basicSetup,
         Prec.highest(
@@ -421,8 +357,36 @@ export function CodeEditor({
     }
 
     viewRef.current = view;
+    const unregisterShortcuts = registerEditorShortcutOwner({
+      element: host,
+      handleShortcut: (kind) => {
+        const currentView = viewRef.current;
+        if (!currentView) {
+          return;
+        }
+
+        if (kind === 'find') {
+          openCodeMirrorSearchPanel(currentView, hostRef.current);
+          searchPanelVisibleRef.current = true;
+          onSearchPanelVisibleChangeRef.current(true);
+        } else if (kind === 'undo') {
+          undo(currentView);
+        } else {
+          redo(currentView);
+        }
+      },
+      shouldHandleShortcut: (kind, event) => {
+        if (kind === 'find') {
+          return true;
+        }
+
+        const target = event.target;
+        return !(target instanceof HTMLElement && target.closest('.cm-panel.cm-search'));
+      },
+    });
 
     return () => {
+      unregisterShortcuts();
       view.destroy();
       viewRef.current = null;
     };

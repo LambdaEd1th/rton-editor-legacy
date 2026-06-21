@@ -13,7 +13,7 @@ import {
 import { useI18n } from '../localization/use-i18n';
 import type { Translator } from '../localization/i18n';
 import { inspectRtonByte, type RtonByteInspection } from '../rton-byte-inspector';
-import { eventTargetsElement, isFindShortcut, isRedoShortcut, isUndoShortcut } from './keyboard-shortcuts';
+import { isFindShortcut, isRedoShortcut, isUndoShortcut, registerEditorShortcutOwner } from './keyboard-shortcuts';
 
 type PendingHexEdit = {
   offset: number;
@@ -487,57 +487,30 @@ export function HexEditor({
   }, [onSearchPanelVisibleChange]);
 
   useEffect(() => {
-    const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) {
-        return;
-      }
-      if (!eventTargetsElement(editorRef.current, event)) {
-        return;
-      }
+    const element = editorRef.current;
+    if (!element) {
+      return;
+    }
 
-      if (isFindShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        showSearchPanel();
-      } else if (isUndoShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        undoBytes();
-      } else if (isRedoShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        redoBytes();
-      }
-    };
-
-    window.addEventListener('keydown', handleFindShortcut, true);
-    document.addEventListener('keydown', handleFindShortcut, true);
-    return () => {
-      window.removeEventListener('keydown', handleFindShortcut, true);
-      document.removeEventListener('keydown', handleFindShortcut, true);
-    };
+    return registerEditorShortcutOwner({
+      element,
+      handleShortcut: (kind) => {
+        if (kind === 'find') {
+          showSearchPanel();
+        } else if (kind === 'undo') {
+          undoBytes();
+        } else {
+          redoBytes();
+        }
+      },
+      shouldHandleShortcut: (kind, event) => {
+        if (kind === 'find') {
+          return true;
+        }
+        return !eventTargetClosest(event, '.rton-hex-search-panel');
+      },
+    });
   }, [redoBytes, showSearchPanel, undoBytes]);
-
-  useEffect(() => {
-    const handleHistoryInput = (event: InputEvent) => {
-      if (event.defaultPrevented || !eventTargetsElement(editorRef.current, event)) {
-        return;
-      }
-
-      if (event.inputType === 'historyUndo') {
-        event.preventDefault();
-        event.stopPropagation();
-        undoBytes();
-      } else if (event.inputType === 'historyRedo') {
-        event.preventDefault();
-        event.stopPropagation();
-        redoBytes();
-      }
-    };
-
-    document.addEventListener('beforeinput', handleHistoryInput, true);
-    return () => document.removeEventListener('beforeinput', handleHistoryInput, true);
-  }, [redoBytes, undoBytes]);
 
   useEffect(() => {
     if (!searchPanelVisible) {
@@ -1716,6 +1689,11 @@ function findContainingMatch(matches: HexSearchMatch[], offset: number) {
 
 function appendHistoryEntry(entries: Uint8Array[], bytes: Uint8Array) {
   return [...entries.slice(-HEX_HISTORY_LIMIT + 1), bytes];
+}
+
+function eventTargetClosest(event: Event, selector: string) {
+  const target = event.target;
+  return target instanceof HTMLElement && target.closest(selector) !== null;
 }
 
 function classNames(...values: Array<string | false | null | undefined>) {
