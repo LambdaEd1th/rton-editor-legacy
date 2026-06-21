@@ -17,6 +17,7 @@ import { inspectRtonByte, type RtonByteInspection } from '../rton-byte-inspector
 type PendingHexEdit = {
   offset: number;
   text: string;
+  deleteLength?: number;
 };
 
 type ByteSelection = {
@@ -458,7 +459,7 @@ export function HexEditor({
   }, [findRelativeSearchMatch, focusSearchMatch]);
 
   const replaceByteSpan = useCallback(
-    (offset: number, deleteLength: number, values: number[]) => {
+    (offset: number, deleteLength: number, values: number[], pane: 'hex' | 'ascii' = searchMode === 'ascii' ? 'ascii' : 'hex') => {
       if (readOnly) {
         return;
       }
@@ -472,11 +473,27 @@ export function HexEditor({
       onChange(nextBytes);
       setPendingEdit(null);
       setSelectionRange(null);
-      const pane = searchMode === 'ascii' ? 'ascii' : 'hex';
       activePane.current = pane;
       focusOffsetInLength(values.length > 0 ? safeOffset : Math.min(safeOffset, nextBytes.length - 1), nextBytes.length, pane);
     },
     [bytes, focusOffsetInLength, onChange, readOnly, searchMode],
+  );
+
+  const replaceSelectionWithBytes = useCallback(
+    (values: number[], pane = activePane.current) => {
+      if (!normalizedSelection) {
+        return false;
+      }
+
+      replaceByteSpan(normalizedSelection.start, normalizedSelection.length, values, pane);
+      return true;
+    },
+    [normalizedSelection, replaceByteSpan],
+  );
+
+  const deleteSelection = useCallback(
+    (pane = activePane.current) => replaceSelectionWithBytes([], pane),
+    [replaceSelectionWithBytes],
   );
 
   const replaceCurrentSearchMatch = useCallback(() => {
@@ -686,9 +703,14 @@ export function HexEditor({
       if (readOnly || text.length === 0) {
         return;
       }
-      setByteRange(offset, [parseInt(text, 16)]);
+      const value = parseInt(text, 16);
+      if (pendingEdit.deleteLength !== undefined) {
+        replaceByteSpan(offset, pendingEdit.deleteLength, [value], 'hex');
+      } else {
+        setByteRange(offset, [value]);
+      }
     },
-    [pendingEdit, readOnly, setByteRange],
+    [pendingEdit, readOnly, replaceByteSpan, setByteRange],
   );
 
   const handleTextChange = useCallback(
@@ -698,16 +720,25 @@ export function HexEditor({
         return;
       }
       const text = rawText.replace(/[^0-9a-f]/gi, '').slice(0, 2).toUpperCase();
-      setSelectedOffset(offset);
+      const editOffset = normalizedSelection?.start ?? offset;
+      setSelectedOffset(editOffset);
       if (text.length < 2) {
-        setPendingEdit({ offset, text });
+        setPendingEdit({
+          offset: editOffset,
+          text,
+          deleteLength: normalizedSelection?.length,
+        });
         return;
       }
 
       setPendingEdit(null);
-      setByteRange(offset, [parseInt(text, 16)]);
+      if (normalizedSelection) {
+        replaceByteSpan(normalizedSelection.start, normalizedSelection.length, [parseInt(text, 16)], 'hex');
+      } else {
+        setByteRange(offset, [parseInt(text, 16)]);
+      }
     },
-    [readOnly, setByteRange],
+    [normalizedSelection, readOnly, replaceByteSpan, setByteRange],
   );
 
   const handleKeyDown = useCallback(
@@ -769,8 +800,10 @@ export function HexEditor({
         }
       if (key === 'Backspace') {
         event.preventDefault();
-        if (pendingEdit?.offset === offset && pendingEdit.text.length > 0) {
-          setPendingEdit({ offset, text: '' });
+        if (pendingEdit && pendingEdit.text.length > 0) {
+          setPendingEdit({ ...pendingEdit, text: '' });
+        } else if (deleteSelection('hex')) {
+          return;
         } else if (insertMode) {
           deleteByteRange(offset - 1, 1, offset - 1);
         } else {
@@ -781,6 +814,9 @@ export function HexEditor({
       if (key === 'Delete') {
         event.preventDefault();
         setPendingEdit(null);
+        if (deleteSelection('hex')) {
+          return;
+        }
         if (insertMode) {
           deleteByteRange(offset, 1, offset);
         } else {
@@ -802,16 +838,25 @@ export function HexEditor({
       }
       if (key.length === 1 && HEX_CHAR_RE.test(key)) {
         event.preventDefault();
-        const currentText = pendingEdit?.offset === offset ? pendingEdit.text : '';
+        const editOffset = normalizedSelection?.start ?? offset;
+        const currentText = pendingEdit?.offset === editOffset ? pendingEdit.text : '';
         const nextText = `${currentText}${key.toUpperCase()}`.slice(0, 2);
         if (nextText.length < 2) {
-          setPendingEdit({ offset, text: nextText });
-          setSelectedOffset(offset);
+          setPendingEdit({
+            offset: editOffset,
+            text: nextText,
+            deleteLength: normalizedSelection?.length,
+          });
+          setSelectedOffset(editOffset);
           return;
         }
 
         setPendingEdit(null);
-        setByteRange(offset, [parseInt(nextText, 16)]);
+        if (normalizedSelection) {
+          replaceByteSpan(normalizedSelection.start, normalizedSelection.length, [parseInt(nextText, 16)], 'hex');
+        } else {
+          setByteRange(offset, [parseInt(nextText, 16)]);
+        }
       }
     },
     [
@@ -819,10 +864,13 @@ export function HexEditor({
       bytesPerRow,
       commitPendingEdit,
       deleteByteRange,
+      deleteSelection,
       focusOffset,
       insertMode,
+      normalizedSelection,
       pendingEdit,
       readOnly,
+      replaceByteSpan,
       setByte,
       setByteRange,
       showSearchPanel,
@@ -837,12 +885,12 @@ export function HexEditor({
       }
 
       event.preventDefault();
-      setByteRange(
-        offset,
-        pairs.map((pair) => parseInt(pair, 16)),
-      );
+      const values = pairs.map((pair) => parseInt(pair, 16));
+      if (!replaceSelectionWithBytes(values, 'hex')) {
+        setByteRange(offset, values);
+      }
     },
-    [readOnly, setByteRange],
+    [readOnly, replaceSelectionWithBytes, setByteRange],
   );
 
   const handleAsciiChange = useCallback(
@@ -851,6 +899,9 @@ export function HexEditor({
         return;
       }
       if (rawText.length === 0) {
+        if (deleteSelection('ascii')) {
+          return;
+        }
         if (insertMode) {
           deleteByteRange(offset, 1, offset);
         } else {
@@ -870,9 +921,11 @@ export function HexEditor({
       }
 
       setPendingEdit(null);
-      setByteRange(offset, [codePoint]);
+      if (!replaceSelectionWithBytes([codePoint], 'ascii')) {
+        setByteRange(offset, [codePoint]);
+      }
     },
-    [deleteByteRange, insertMode, readOnly, setByte, setByteRange],
+    [deleteByteRange, deleteSelection, insertMode, readOnly, replaceSelectionWithBytes, setByte, setByteRange],
   );
 
   const handleAsciiKeyDown = useCallback(
@@ -928,6 +981,9 @@ export function HexEditor({
       if (key === 'Backspace' || key === 'Delete') {
         event.preventDefault();
         setPendingEdit(null);
+        if (deleteSelection('ascii')) {
+          return;
+        }
         if (insertMode) {
           if (key === 'Backspace') {
             deleteByteRange(offset - 1, 1, offset - 1);
@@ -944,7 +1000,7 @@ export function HexEditor({
           event.currentTarget.blur();
         }
     },
-    [bytes.length, bytesPerRow, deleteByteRange, focusOffset, insertMode, readOnly, setByte, showSearchPanel],
+    [bytes.length, bytesPerRow, deleteByteRange, deleteSelection, focusOffset, insertMode, readOnly, setByte, showSearchPanel],
   );
 
   const handleAsciiPaste = useCallback(
@@ -962,9 +1018,11 @@ export function HexEditor({
       }
 
       event.preventDefault();
-      setByteRange(offset, values);
+      if (!replaceSelectionWithBytes(values, 'ascii')) {
+        setByteRange(offset, values);
+      }
     },
-    [readOnly, setByteRange],
+    [readOnly, replaceSelectionWithBytes, setByteRange],
   );
 
   useEffect(() => {
