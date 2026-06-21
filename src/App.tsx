@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type MutableRefObject,
 } from 'react';
 import {
   Activity,
@@ -52,14 +51,12 @@ import { runActiveEditorShortcut, type EditorShortcutKind } from './components/k
 import { RtonInlineSelect, type RtonInlineSelectOption } from './components/RtonInlineSelect';
 import { RtonValueInspector } from './components/RtonValueInspector';
 import {
-  isRtonNumberKind,
-  previewRtonValue,
   replaceRtonValueAtPath,
   type RtonValuePath,
-  type SearchMatch,
   type SearchState,
 } from './rton-value-editing';
 import { locateRtonPathInText } from './rton-text-locator';
+import { collectStats, emptyStats, RTON_SEARCH_MATCH_LIMIT, runChunkedSearch, type Stats } from './rton-value-analysis';
 
 type JsonScalar = string | number | boolean | null;
 type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
@@ -71,19 +68,6 @@ type ThemePreference = 'system' | 'light' | 'dark';
 type StructuredFormatter = (value: RtonValue, mode: StructuredFormatMode) => string;
 type Tone = 'ok' | 'warn' | 'error';
 type StatusState = { message: string; tone: Tone };
-
-type Stats = {
-  nodes: number;
-  objects: number;
-  arrays: number;
-  strings: number;
-  numbers: number;
-  booleans: number;
-  nulls: number;
-  rtids: number;
-  binaries: number;
-  maxDepth: number;
-};
 
 type EditorTab = {
   id: number;
@@ -206,13 +190,6 @@ type ByteTransformWorkerPayload =
       bytes: Uint8Array;
     };
 
-type SearchFrame =
-  | { kind: 'value'; value: RtonValue; path: string; valuePath: RtonValuePath }
-  | { kind: 'array'; value: RtonValue[]; path: string; valuePath: RtonValuePath; index: number }
-  | { kind: 'object'; value: Array<{ key: string; value: RtonValue }>; path: string; valuePath: RtonValuePath; index: number };
-
-const SEARCH_MATCH_LIMIT = 120;
-const SEARCH_CHUNK_MS = 10;
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
 const FORMAT_WORKER_TIMEOUT_MS = 20_000;
@@ -2116,7 +2093,7 @@ export function App() {
                 <RtonValueInspector
                   state={searchState}
                   value={currentValue}
-                  searchMatchLimit={SEARCH_MATCH_LIMIT}
+                  searchMatchLimit={RTON_SEARCH_MATCH_LIMIT}
                   onChange={updateRtonValueNode}
                   onNavigate={navigateToRtonValueNode}
                   onError={(message) => updateStatus(message, 'error')}
@@ -2145,147 +2122,6 @@ export function App() {
       </footer>
     </main>
   );
-}
-
-function runChunkedSearch(
-  value: RtonValue,
-  query: string,
-  searchId: number,
-  activeSearchId: MutableRefObject<number>,
-  setSearchState: (state: SearchState) => void,
-) {
-  const matches: SearchMatch[] = [];
-  const stack: SearchFrame[] = [{ kind: 'value', value, path: '$', valuePath: [] }];
-  let scanned = 0;
-  let lastPaint = 0;
-
-  const runChunk = () => {
-    if (searchId !== activeSearchId.current) {
-      return;
-    }
-
-    const started = performance.now();
-    while (stack.length > 0 && matches.length < SEARCH_MATCH_LIMIT && performance.now() - started < SEARCH_CHUNK_MS) {
-      const frame = stack.pop();
-      if (!frame) {
-        continue;
-      }
-
-      if (frame.kind === 'array') {
-        if (frame.index < frame.value.length) {
-          const index = frame.index;
-          frame.index += 1;
-          stack.push(frame);
-          stack.push({
-            kind: 'value',
-            value: frame.value[index],
-            path: `${frame.path}[${index}]`,
-            valuePath: [...frame.valuePath, { kind: 'array' as const, index }],
-          });
-        }
-        continue;
-      }
-
-      if (frame.kind === 'object') {
-        if (frame.index < frame.value.length) {
-          const entry = frame.value[frame.index];
-          const index = frame.index;
-          frame.index += 1;
-          stack.push(frame);
-          stack.push({
-            kind: 'value',
-            value: entry.value,
-            path: childPath(frame.path, entry.key),
-            valuePath: [...frame.valuePath, { kind: 'object' as const, index }],
-          });
-        }
-        continue;
-      }
-
-      scanned += 1;
-      const preview = previewRtonValue(frame.value);
-      if (frame.path.toLowerCase().includes(query) || preview.toLowerCase().includes(query)) {
-        matches.push({ path: frame.path, preview, valuePath: frame.valuePath });
-      }
-
-      if (frame.value.kind === 'array') {
-        stack.push({ kind: 'array', value: frame.value.items, path: frame.path, valuePath: frame.valuePath, index: 0 });
-      } else if (frame.value.kind === 'object') {
-        stack.push({ kind: 'object', value: frame.value.entries, path: frame.path, valuePath: frame.valuePath, index: 0 });
-      }
-    }
-
-    const done = stack.length === 0;
-    const capped = matches.length >= SEARCH_MATCH_LIMIT;
-    const now = performance.now();
-    if (now - lastPaint > 90 || done || capped) {
-      setSearchState({ kind: 'results', query, matches: [...matches], scanned, done, capped });
-      lastPaint = now;
-    }
-
-    if (!done && !capped) {
-      window.setTimeout(runChunk, 0);
-    }
-  };
-
-  window.setTimeout(runChunk, 0);
-}
-
-function collectStats(value: RtonValue): Stats {
-  const stats = emptyStats();
-  const stack: Array<{ value: RtonValue; depth: number }> = [{ value, depth: 1 }];
-
-  while (stack.length > 0) {
-    const item = stack.pop();
-    if (!item) {
-      continue;
-    }
-
-    stats.nodes += 1;
-    stats.maxDepth = Math.max(stats.maxDepth, item.depth);
-    const current = item.value;
-
-    if (current.kind === 'array') {
-      stats.arrays += 1;
-      for (let index = current.items.length - 1; index >= 0; index -= 1) {
-        stack.push({ value: current.items[index], depth: item.depth + 1 });
-      }
-    } else if (current.kind === 'object') {
-      stats.objects += 1;
-      for (let index = current.entries.length - 1; index >= 0; index -= 1) {
-        stack.push({ value: current.entries[index].value, depth: item.depth + 1 });
-      }
-    } else if (current.kind === 'string') {
-      stats.strings += 1;
-    } else if (current.kind === 'binary') {
-      stats.binaries += 1;
-    } else if (current.kind === 'rtid') {
-      stats.rtids += 1;
-    } else if (isRtonNumberKind(current.kind)) {
-      stats.numbers += 1;
-    } else if (current.kind === 'bool') {
-      stats.booleans += 1;
-    } else {
-      stats.nulls += 1;
-    }
-  }
-
-  return stats;
-}
-
-function emptyStats(): Stats {
-  return {
-    nodes: 0,
-    objects: 0,
-    arrays: 0,
-    strings: 0,
-    numbers: 0,
-    booleans: 0,
-    nulls: 0,
-    rtids: 0,
-    binaries: 0,
-    maxDepth: 0,
-  };
 }
 
 function isThemePreference(value: unknown): value is ThemePreference {
@@ -2329,10 +2165,6 @@ function applyThemePreference(value: ThemePreference) {
   const resolved = value === 'system' ? (window.matchMedia(SYSTEM_DARK_QUERY).matches ? 'dark' : 'light') : value;
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themePreference = value;
-}
-
-function childPath(parent: string, key: string) {
-  return /^[A-Za-z_$][\w$]*$/.test(key) ? `${parent}.${key}` : `${parent}[${JSON.stringify(key)}]`;
 }
 
 function outputBaseName(fileName: string, extension: string) {
