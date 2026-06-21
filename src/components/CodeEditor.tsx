@@ -59,7 +59,7 @@ const editorTheme = EditorView.theme(
       color: 'var(--color-text-subtle)',
     },
     '.cm-activeLine': {
-      backgroundColor: 'rgba(101, 221, 210, 0.055)',
+      backgroundColor: 'var(--color-editor-active-line)',
     },
     '.cm-activeLineGutter': {
       backgroundColor: 'var(--color-surface-soft)',
@@ -69,7 +69,7 @@ const editorTheme = EditorView.theme(
       borderLeftColor: 'var(--color-accent-text)',
     },
     '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-      backgroundColor: 'rgba(101, 221, 210, 0.24)',
+      backgroundColor: 'var(--color-editor-selection)',
     },
     '.cm-panels': {
       backgroundColor: 'var(--color-surface-raised)',
@@ -234,12 +234,12 @@ const editorTheme = EditorView.theme(
     },
     '.cm-searchMatch': {
       borderRadius: '2px',
-      backgroundColor: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',
-      boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-accent) 28%, transparent) inset',
+      backgroundColor: 'var(--color-editor-search-match)',
+      boxShadow: '0 0 0 1px var(--color-editor-search-match-border) inset',
     },
     '.cm-searchMatch-selected': {
-      backgroundColor: 'color-mix(in srgb, var(--color-accent) 32%, transparent)',
-      boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-accent-border) 70%, transparent) inset',
+      backgroundColor: 'var(--color-editor-search-current)',
+      boxShadow: '0 0 0 1px var(--color-editor-search-current-border) inset',
     },
     '.cm-tooltip': {
       backgroundColor: 'var(--color-surface-raised)',

@@ -76,6 +76,12 @@
   --color-code-operator: #b9c2cd;
   --color-code-punctuation: #9ca7b4;
   --color-code-meta: #d9a441;
+  --color-editor-active-line: rgba(148, 163, 184, 0.075);
+  --color-editor-selection: rgba(76, 139, 245, 0.32);
+  --color-editor-search-match: rgba(209, 147, 45, 0.2);
+  --color-editor-search-match-border: rgba(232, 179, 79, 0.34);
+  --color-editor-search-current: rgba(209, 147, 45, 0.34);
+  --color-editor-search-current-border: rgba(245, 194, 98, 0.62);
   --radius: 6px;
   color-scheme: var(--color-scheme);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -135,6 +141,12 @@
   --color-code-operator: #4b5563;
   --color-code-punctuation: #687386;
   --color-code-meta: #9a6700;
+  --color-editor-active-line: rgba(30, 64, 92, 0.045);
+  --color-editor-selection: rgba(37, 99, 235, 0.2);
+  --color-editor-search-match: rgba(217, 144, 37, 0.18);
+  --color-editor-search-match-border: rgba(166, 105, 18, 0.24);
+  --color-editor-search-current: rgba(217, 144, 37, 0.3);
+  --color-editor-search-current-border: rgba(150, 92, 8, 0.42);
 }
 
 * {
@@ -1438,7 +1450,7 @@ summary {
 }
 
 ::selection {
-  background: rgba(101, 221, 210, 0.26);
+  background: var(--color-editor-selection);
 }
 
 ::-webkit-scrollbar {
