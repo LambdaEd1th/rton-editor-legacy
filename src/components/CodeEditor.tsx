@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { basicSetup } from 'codemirror';
-import { indentWithTab } from '@codemirror/commands';
+import { indentWithTab, redo, undo } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
 import { yaml } from '@codemirror/lang-yaml';
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import { closeSearchPanel, openSearchPanel, searchPanelOpen as isSearchPanelOpen } from '@codemirror/search';
-import { Compartment, type Extension } from '@codemirror/state';
+import { Compartment, Prec, type Extension } from '@codemirror/state';
 import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
-import { eventTargetsElement, isFindShortcut } from './keyboard-shortcuts';
+import { eventTargetsElement, isFindShortcut, isRedoShortcut, isUndoShortcut } from './keyboard-shortcuts';
 
 type EditorMode = 'json' | 'yaml' | 'toml';
 
@@ -307,25 +307,67 @@ export function CodeEditor({
 
   useEffect(() => {
     const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
-      if (!isFindShortcut(event) || !eventTargetsElement(hostRef.current, event)) {
+      if (event.defaultPrevented) {
+        return;
+      }
+      if (!eventTargetsElement(hostRef.current, event)) {
         return;
       }
 
-      event.preventDefault();
-      event.stopPropagation();
       const view = viewRef.current;
-      if (view) {
-        openSearchPanel(view);
-        requestAnimationFrame(() => {
-          hostRef.current?.querySelector<HTMLInputElement>('.cm-panel.cm-search input[name="search"]')?.focus();
-        });
+      if (!view) {
+        return;
       }
-      searchPanelVisibleRef.current = true;
-      onSearchPanelVisibleChangeRef.current(true);
+
+      if (isFindShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        openCodeMirrorSearchPanel(view, hostRef.current);
+        searchPanelVisibleRef.current = true;
+        onSearchPanelVisibleChangeRef.current(true);
+      } else if (isUndoShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        undo(view);
+      } else if (isRedoShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        redo(view);
+      }
     };
 
     window.addEventListener('keydown', handleFindShortcut, true);
-    return () => window.removeEventListener('keydown', handleFindShortcut, true);
+    document.addEventListener('keydown', handleFindShortcut, true);
+    return () => {
+      window.removeEventListener('keydown', handleFindShortcut, true);
+      document.removeEventListener('keydown', handleFindShortcut, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleHistoryInput = (event: InputEvent) => {
+      if (event.defaultPrevented || !eventTargetsElement(hostRef.current, event)) {
+        return;
+      }
+
+      const view = viewRef.current;
+      if (!view) {
+        return;
+      }
+
+      if (event.inputType === 'historyUndo') {
+        event.preventDefault();
+        event.stopPropagation();
+        undo(view);
+      } else if (event.inputType === 'historyRedo') {
+        event.preventDefault();
+        event.stopPropagation();
+        redo(view);
+      }
+    };
+
+    document.addEventListener('beforeinput', handleHistoryInput, true);
+    return () => document.removeEventListener('beforeinput', handleHistoryInput, true);
   }, []);
 
   useEffect(() => {
@@ -338,6 +380,22 @@ export function CodeEditor({
       parent: hostRef.current,
       extensions: [
         basicSetup,
+        Prec.highest(
+          keymap.of([
+            {
+              key: 'Mod-f',
+              run: (view) => {
+                openCodeMirrorSearchPanel(view, hostRef.current);
+                searchPanelVisibleRef.current = true;
+                onSearchPanelVisibleChangeRef.current(true);
+                return true;
+              },
+            },
+            { key: 'Mod-z', run: undo },
+            { key: 'Shift-Mod-z', run: redo },
+            { key: 'Mod-y', run: redo },
+          ]),
+        ),
         keymap.of([indentWithTab]),
         syntaxHighlighting(rtonHighlightStyle),
         languageCompartment.current.of(languageExtension(mode)),
@@ -450,6 +508,13 @@ export function CodeEditor({
   }, [jumpTarget]);
 
   return <div ref={hostRef} className="h-full min-h-0 w-full overflow-hidden" />;
+}
+
+function openCodeMirrorSearchPanel(view: EditorView, host: HTMLElement | null) {
+  openSearchPanel(view);
+  requestAnimationFrame(() => {
+    host?.querySelector<HTMLInputElement>('.cm-panel.cm-search input[name="search"]')?.focus();
+  });
 }
 
 function languageExtension(mode: EditorMode): Extension {

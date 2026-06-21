@@ -13,7 +13,7 @@ import {
 import { useI18n } from '../localization/use-i18n';
 import type { Translator } from '../localization/i18n';
 import { inspectRtonByte, type RtonByteInspection } from '../rton-byte-inspector';
-import { eventTargetsElement, isFindShortcut } from './keyboard-shortcuts';
+import { eventTargetsElement, isFindShortcut, isRedoShortcut, isUndoShortcut } from './keyboard-shortcuts';
 
 type PendingHexEdit = {
   offset: number;
@@ -24,6 +24,11 @@ type PendingHexEdit = {
 type ByteSelection = {
   anchor: number;
   focus: number;
+};
+
+type ByteHistory = {
+  past: Uint8Array[];
+  future: Uint8Array[];
 };
 
 type HexEditorProps = {
@@ -63,6 +68,7 @@ const SEARCH_MATCH_DISPLAY_LIMIT = 5000;
 const HEX_SEARCH_CHUNK_BYTES = 240_000;
 const HEX_SEARCH_FRAME_BUDGET_MS = 8;
 const MAX_VIRTUAL_SCROLL_HEIGHT = 8_000_000;
+const HEX_HISTORY_LIMIT = 24;
 const HEX_CHAR_RE = /^[0-9a-fA-F]$/;
 
 export function HexEditor({
@@ -81,6 +87,8 @@ export function HexEditor({
   const hexInputRefs = useRef(new Map<number, HTMLInputElement>());
   const asciiInputRefs = useRef(new Map<number, HTMLInputElement>());
   const activePane = useRef<'hex' | 'ascii'>('hex');
+  const byteHistory = useRef<ByteHistory>({ past: [], future: [] });
+  const expectedBytesRef = useRef<Uint8Array | null>(null);
   const isPointerSelecting = useRef(false);
   const selectionAnchorRef = useRef(0);
   const searchRunId = useRef(0);
@@ -175,6 +183,16 @@ export function HexEditor({
     observer.observe(scroller);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (expectedBytesRef.current === bytes) {
+      expectedBytesRef.current = null;
+      return;
+    }
+
+    expectedBytesRef.current = null;
+    byteHistory.current = { past: [], future: [] };
+  }, [bytes]);
 
   useEffect(() => {
     if (bytes.length === 0) {
@@ -358,6 +376,78 @@ export function HexEditor({
     [applySelectionRange, bytes.length, focusOffsetInLength, selectedOffset, selectionRange],
   );
 
+  const commitBytes = useCallback(
+    (nextBytes: Uint8Array, nextFocusOffset: number, pane: 'hex' | 'ascii' = activePane.current) => {
+      if (readOnly || nextBytes === bytes) {
+        return;
+      }
+
+      byteHistory.current = {
+        past: appendHistoryEntry(byteHistory.current.past, bytes),
+        future: [],
+      };
+      expectedBytesRef.current = nextBytes;
+      onChange(nextBytes);
+      setPendingEdit(null);
+      setSelectionRange(null);
+      if (nextBytes.length === 0) {
+        setSelectedOffset(0);
+      } else {
+        focusOffsetInLength(nextFocusOffset, nextBytes.length, pane);
+      }
+    },
+    [bytes, focusOffsetInLength, onChange, readOnly],
+  );
+
+  const restoreBytes = useCallback(
+    (nextBytes: Uint8Array, pane: 'hex' | 'ascii' = activePane.current) => {
+      expectedBytesRef.current = nextBytes;
+      onChange(nextBytes);
+      setPendingEdit(null);
+      setSelectionRange(null);
+      if (nextBytes.length === 0) {
+        setSelectedOffset(0);
+      } else {
+        focusOffsetInLength(Math.min(selectedOffset, nextBytes.length - 1), nextBytes.length, pane);
+      }
+    },
+    [focusOffsetInLength, onChange, selectedOffset],
+  );
+
+  const undoBytes = useCallback(
+    (pane: 'hex' | 'ascii' = activePane.current) => {
+      const previous = byteHistory.current.past.at(-1);
+      if (!previous) {
+        return false;
+      }
+
+      byteHistory.current = {
+        past: byteHistory.current.past.slice(0, -1),
+        future: appendHistoryEntry(byteHistory.current.future, bytes),
+      };
+      restoreBytes(previous, pane);
+      return true;
+    },
+    [bytes, restoreBytes],
+  );
+
+  const redoBytes = useCallback(
+    (pane: 'hex' | 'ascii' = activePane.current) => {
+      const next = byteHistory.current.future.at(-1);
+      if (!next) {
+        return false;
+      }
+
+      byteHistory.current = {
+        past: appendHistoryEntry(byteHistory.current.past, bytes),
+        future: byteHistory.current.future.slice(0, -1),
+      };
+      restoreBytes(next, pane);
+      return true;
+    },
+    [bytes, restoreBytes],
+  );
+
   const handleBytePointerDown = useCallback(
     (event: PointerEvent<HTMLInputElement>, offset: number, pane: 'hex' | 'ascii') => {
       if (event.button !== 0 || bytes.length === 0) {
@@ -398,18 +488,56 @@ export function HexEditor({
 
   useEffect(() => {
     const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
-      if (!isFindShortcut(event) || !eventTargetsElement(editorRef.current, event)) {
+      if (event.defaultPrevented) {
+        return;
+      }
+      if (!eventTargetsElement(editorRef.current, event)) {
         return;
       }
 
-      event.preventDefault();
-      event.stopPropagation();
-      showSearchPanel();
+      if (isFindShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        showSearchPanel();
+      } else if (isUndoShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        undoBytes();
+      } else if (isRedoShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        redoBytes();
+      }
     };
 
     window.addEventListener('keydown', handleFindShortcut, true);
-    return () => window.removeEventListener('keydown', handleFindShortcut, true);
-  }, [showSearchPanel]);
+    document.addEventListener('keydown', handleFindShortcut, true);
+    return () => {
+      window.removeEventListener('keydown', handleFindShortcut, true);
+      document.removeEventListener('keydown', handleFindShortcut, true);
+    };
+  }, [redoBytes, showSearchPanel, undoBytes]);
+
+  useEffect(() => {
+    const handleHistoryInput = (event: InputEvent) => {
+      if (event.defaultPrevented || !eventTargetsElement(editorRef.current, event)) {
+        return;
+      }
+
+      if (event.inputType === 'historyUndo') {
+        event.preventDefault();
+        event.stopPropagation();
+        undoBytes();
+      } else if (event.inputType === 'historyRedo') {
+        event.preventDefault();
+        event.stopPropagation();
+        redoBytes();
+      }
+    };
+
+    document.addEventListener('beforeinput', handleHistoryInput, true);
+    return () => document.removeEventListener('beforeinput', handleHistoryInput, true);
+  }, [redoBytes, undoBytes]);
 
   useEffect(() => {
     if (!searchPanelVisible) {
@@ -487,17 +615,14 @@ export function HexEditor({
       nextBytes.set(values.map((value) => value & 0xff), safeOffset);
       nextBytes.set(bytes.slice(safeOffset + safeDeleteLength), safeOffset + values.length);
 
-      onChange(nextBytes);
-      setPendingEdit(null);
-      setSelectionRange(null);
       activePane.current = pane;
-      focusOffsetInLength(values.length > 0 ? safeOffset : Math.min(safeOffset, nextBytes.length - 1), nextBytes.length, pane);
+      commitBytes(nextBytes, values.length > 0 ? safeOffset : Math.min(safeOffset, nextBytes.length - 1), pane);
     },
-    [bytes, focusOffsetInLength, onChange, readOnly, searchMode],
+    [bytes, commitBytes, readOnly, searchMode],
   );
 
   const replaceSelectionWithBytes = useCallback(
-    (values: number[], pane = activePane.current) => {
+    (values: number[], pane: 'hex' | 'ascii' = activePane.current) => {
       if (!normalizedSelection) {
         return false;
       }
@@ -509,7 +634,7 @@ export function HexEditor({
   );
 
   const deleteSelection = useCallback(
-    (pane = activePane.current) => replaceSelectionWithBytes([], pane),
+    (pane: 'hex' | 'ascii' = activePane.current) => replaceSelectionWithBytes([], pane),
     [replaceSelectionWithBytes],
   );
 
@@ -568,17 +693,13 @@ export function HexEditor({
     }
     nextBytes.set(bytes.subarray(readOffset), writeOffset);
 
-    onChange(nextBytes);
-    setPendingEdit(null);
-    setSelectionRange(null);
     const pane = searchMode === 'ascii' ? 'ascii' : 'hex';
     activePane.current = pane;
-    focusOffsetInLength(Math.min(selectedOffset, nextBytes.length - 1), nextBytes.length, pane);
+    commitBytes(nextBytes, Math.min(selectedOffset, nextBytes.length - 1), pane);
   }, [
     bytes,
     caseSensitive,
-    focusOffsetInLength,
-    onChange,
+    commitBytes,
     replacePattern.bytes,
     replacePattern.valid,
     searchMode,
@@ -587,14 +708,39 @@ export function HexEditor({
     selectedOffset,
   ]);
 
+  const handleShortcutKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLElement>, pane = activePane.current) => {
+      const nativeEvent = event.nativeEvent;
+      if (isFindShortcut(nativeEvent)) {
+        event.preventDefault();
+        event.stopPropagation();
+        showSearchPanel();
+        return true;
+      }
+      if (isUndoShortcut(nativeEvent)) {
+        event.preventDefault();
+        event.stopPropagation();
+        undoBytes(pane);
+        return true;
+      }
+      if (isRedoShortcut(nativeEvent)) {
+        event.preventDefault();
+        event.stopPropagation();
+        redoBytes(pane);
+        return true;
+      }
+      return false;
+    },
+    [redoBytes, showSearchPanel, undoBytes],
+  );
+
   const handleEditorKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
-        event.preventDefault();
-        showSearchPanel();
+      if (handleShortcutKeyDown(event)) {
+        return;
       }
     },
-    [showSearchPanel],
+    [handleShortcutKeyDown],
   );
 
   const handleSearchInputKeyDown = useCallback(
@@ -635,11 +781,9 @@ export function HexEditor({
 
       const nextBytes = new Uint8Array(bytes);
       nextBytes[offset] = value & 0xff;
-      onChange(nextBytes);
-      setSelectedOffset(offset);
-      setSelectionRange(null);
+      commitBytes(nextBytes, offset);
     },
-    [bytes, onChange, readOnly],
+    [bytes, commitBytes, readOnly],
   );
 
   const replaceByteRange = useCallback(
@@ -653,12 +797,9 @@ export function HexEditor({
       for (let index = 0; index < writableLength; index += 1) {
         nextBytes[offset + index] = values[index] & 0xff;
       }
-      onChange(nextBytes);
-      setPendingEdit(null);
-      setSelectionRange(null);
-      focusOffsetInLength(offset + writableLength, nextBytes.length);
+      commitBytes(nextBytes, offset + writableLength);
     },
-    [bytes, focusOffsetInLength, onChange, readOnly],
+    [bytes, commitBytes, readOnly],
   );
 
   const insertByteRange = useCallback(
@@ -672,12 +813,9 @@ export function HexEditor({
       nextBytes.set(bytes.slice(0, insertOffset), 0);
       nextBytes.set(values.map((value) => value & 0xff), insertOffset);
       nextBytes.set(bytes.slice(insertOffset), insertOffset + values.length);
-      onChange(nextBytes);
-      setPendingEdit(null);
-      setSelectionRange(null);
-      focusOffsetInLength(insertOffset + values.length, nextBytes.length);
+      commitBytes(nextBytes, insertOffset + values.length);
     },
-    [bytes, focusOffsetInLength, onChange, readOnly],
+    [bytes, commitBytes, readOnly],
   );
 
   const setByteRange = useCallback(
@@ -701,12 +839,9 @@ export function HexEditor({
       const nextBytes = new Uint8Array(bytes.length - deleteCount);
       nextBytes.set(bytes.slice(0, offset), 0);
       nextBytes.set(bytes.slice(offset + deleteCount), offset);
-      onChange(nextBytes);
-      setPendingEdit(null);
-      setSelectionRange(null);
-      focusOffsetInLength(nextFocusOffset, nextBytes.length);
+      commitBytes(nextBytes, nextFocusOffset);
     },
-    [bytes, focusOffsetInLength, onChange, readOnly],
+    [bytes, commitBytes, readOnly],
   );
 
   const commitPendingEdit = useCallback(
@@ -761,9 +896,7 @@ export function HexEditor({
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>, offset: number) => {
       const key = event.key;
-      if ((event.metaKey || event.ctrlKey) && key.toLowerCase() === 'f') {
-        event.preventDefault();
-        showSearchPanel();
+      if (handleShortcutKeyDown(event, 'hex')) {
         return;
       }
       if (readOnly && (key === 'Insert' || key === 'Backspace' || key === 'Delete' || key === 'Enter' || (key.length === 1 && HEX_CHAR_RE.test(key)))) {
@@ -777,44 +910,44 @@ export function HexEditor({
         setInsertMode((current) => !current);
         return;
       }
-        if (key === 'ArrowLeft') {
-          event.preventDefault();
-          setPendingEdit(null);
-          focusOffset(offset - 1, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'ArrowRight') {
-          event.preventDefault();
-          setPendingEdit(null);
-          focusOffset(offset + 1, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'ArrowUp') {
-          event.preventDefault();
-          setPendingEdit(null);
-          focusOffset(offset - bytesPerRow, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'ArrowDown') {
-          event.preventDefault();
-          setPendingEdit(null);
-          focusOffset(offset + bytesPerRow, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'Home') {
-          event.preventDefault();
-          setPendingEdit(null);
-          focusOffset(Math.floor(offset / bytesPerRow) * bytesPerRow, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'End') {
-          event.preventDefault();
-          setPendingEdit(null);
-          focusOffset(Math.min(Math.floor(offset / bytesPerRow) * bytesPerRow + bytesPerRow - 1, bytes.length - 1), {
-            extendSelection: event.shiftKey,
-          });
-          return;
-        }
+      if (key === 'ArrowLeft') {
+        event.preventDefault();
+        setPendingEdit(null);
+        focusOffset(offset - 1, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'ArrowRight') {
+        event.preventDefault();
+        setPendingEdit(null);
+        focusOffset(offset + 1, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'ArrowUp') {
+        event.preventDefault();
+        setPendingEdit(null);
+        focusOffset(offset - bytesPerRow, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'ArrowDown') {
+        event.preventDefault();
+        setPendingEdit(null);
+        focusOffset(offset + bytesPerRow, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'Home') {
+        event.preventDefault();
+        setPendingEdit(null);
+        focusOffset(Math.floor(offset / bytesPerRow) * bytesPerRow, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'End') {
+        event.preventDefault();
+        setPendingEdit(null);
+        focusOffset(Math.min(Math.floor(offset / bytesPerRow) * bytesPerRow + bytesPerRow - 1, bytes.length - 1), {
+          extendSelection: event.shiftKey,
+        });
+        return;
+      }
       if (key === 'Backspace') {
         event.preventDefault();
         if (pendingEdit && pendingEdit.text.length > 0) {
@@ -841,12 +974,12 @@ export function HexEditor({
         }
         return;
       }
-        if (key === 'Escape') {
-          setPendingEdit(null);
-          setSelectionRange(null);
-          event.currentTarget.blur();
-          return;
-        }
+      if (key === 'Escape') {
+        setPendingEdit(null);
+        setSelectionRange(null);
+        event.currentTarget.blur();
+        return;
+      }
       if (key === 'Enter') {
         event.preventDefault();
         commitPendingEdit(offset);
@@ -883,6 +1016,7 @@ export function HexEditor({
       deleteByteRange,
       deleteSelection,
       focusOffset,
+      handleShortcutKeyDown,
       insertMode,
       normalizedSelection,
       pendingEdit,
@@ -890,7 +1024,6 @@ export function HexEditor({
       replaceByteSpan,
       setByte,
       setByteRange,
-      showSearchPanel,
     ],
   );
 
@@ -948,9 +1081,7 @@ export function HexEditor({
   const handleAsciiKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>, offset: number) => {
       const key = event.key;
-      if ((event.metaKey || event.ctrlKey) && key.toLowerCase() === 'f') {
-        event.preventDefault();
-        showSearchPanel();
+      if (handleShortcutKeyDown(event, 'ascii')) {
         return;
       }
       if (readOnly && (key === 'Insert' || key === 'Backspace' || key === 'Delete')) {
@@ -963,38 +1094,38 @@ export function HexEditor({
         setInsertMode((current) => !current);
         return;
       }
-        if (key === 'ArrowLeft') {
-          event.preventDefault();
-          focusOffset(offset - 1, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'ArrowRight') {
-          event.preventDefault();
-          focusOffset(offset + 1, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'ArrowUp') {
-          event.preventDefault();
-          focusOffset(offset - bytesPerRow, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'ArrowDown') {
-          event.preventDefault();
-          focusOffset(offset + bytesPerRow, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'Home') {
-          event.preventDefault();
-          focusOffset(Math.floor(offset / bytesPerRow) * bytesPerRow, { extendSelection: event.shiftKey });
-          return;
-        }
-        if (key === 'End') {
-          event.preventDefault();
-          focusOffset(Math.min(Math.floor(offset / bytesPerRow) * bytesPerRow + bytesPerRow - 1, bytes.length - 1), {
-            extendSelection: event.shiftKey,
-          });
-          return;
-        }
+      if (key === 'ArrowLeft') {
+        event.preventDefault();
+        focusOffset(offset - 1, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'ArrowRight') {
+        event.preventDefault();
+        focusOffset(offset + 1, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'ArrowUp') {
+        event.preventDefault();
+        focusOffset(offset - bytesPerRow, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'ArrowDown') {
+        event.preventDefault();
+        focusOffset(offset + bytesPerRow, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'Home') {
+        event.preventDefault();
+        focusOffset(Math.floor(offset / bytesPerRow) * bytesPerRow, { extendSelection: event.shiftKey });
+        return;
+      }
+      if (key === 'End') {
+        event.preventDefault();
+        focusOffset(Math.min(Math.floor(offset / bytesPerRow) * bytesPerRow + bytesPerRow - 1, bytes.length - 1), {
+          extendSelection: event.shiftKey,
+        });
+        return;
+      }
       if (key === 'Backspace' || key === 'Delete') {
         event.preventDefault();
         setPendingEdit(null);
@@ -1012,12 +1143,12 @@ export function HexEditor({
         }
         return;
       }
-        if (key === 'Escape') {
-          setSelectionRange(null);
-          event.currentTarget.blur();
-        }
+      if (key === 'Escape') {
+        setSelectionRange(null);
+        event.currentTarget.blur();
+      }
     },
-    [bytes.length, bytesPerRow, deleteByteRange, deleteSelection, focusOffset, insertMode, readOnly, setByte, showSearchPanel],
+    [bytes.length, bytesPerRow, deleteByteRange, deleteSelection, focusOffset, handleShortcutKeyDown, insertMode, readOnly, setByte],
   );
 
   const handleAsciiPaste = useCallback(
@@ -1581,6 +1712,10 @@ function findContainingMatch(matches: HexSearchMatch[], offset: number) {
   }
 
   return candidate && offset < candidate.offset + candidate.length ? candidate : null;
+}
+
+function appendHistoryEntry(entries: Uint8Array[], bytes: Uint8Array) {
+  return [...entries.slice(-HEX_HISTORY_LIMIT + 1), bytes];
 }
 
 function classNames(...values: Array<string | false | null | undefined>) {
