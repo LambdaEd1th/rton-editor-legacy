@@ -9,6 +9,7 @@ import { closeSearchPanel, openSearchPanel, searchPanelOpen as isSearchPanelOpen
 import { Compartment, type Extension } from '@codemirror/state';
 import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
+import { eventTargetsElement, isFindShortcut } from './keyboard-shortcuts';
 
 type EditorMode = 'json' | 'yaml' | 'toml';
 
@@ -303,6 +304,29 @@ export function CodeEditor({
   useEffect(() => {
     onSearchPanelVisibleChangeRef.current = onSearchPanelVisibleChange;
   }, [onSearchPanelVisibleChange]);
+
+  useEffect(() => {
+    const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
+      if (!isFindShortcut(event) || !eventTargetsElement(hostRef.current, event)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      const view = viewRef.current;
+      if (view) {
+        openSearchPanel(view);
+        requestAnimationFrame(() => {
+          hostRef.current?.querySelector<HTMLInputElement>('.cm-panel.cm-search input[name="search"]')?.focus();
+        });
+      }
+      searchPanelVisibleRef.current = true;
+      onSearchPanelVisibleChangeRef.current(true);
+    };
+
+    window.addEventListener('keydown', handleFindShortcut, true);
+    return () => window.removeEventListener('keydown', handleFindShortcut, true);
+  }, []);
 
   useEffect(() => {
     if (!hostRef.current) {

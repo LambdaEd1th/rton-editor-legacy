@@ -13,6 +13,7 @@ import {
 import { useI18n } from '../localization/use-i18n';
 import type { Translator } from '../localization/i18n';
 import { inspectRtonByte, type RtonByteInspection } from '../rton-byte-inspector';
+import { eventTargetsElement, isFindShortcut } from './keyboard-shortcuts';
 
 type PendingHexEdit = {
   offset: number;
@@ -74,6 +75,7 @@ export function HexEditor({
   onSearchPanelVisibleChange,
 }: HexEditorProps) {
   const { lang, t } = useI18n();
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const hexInputRefs = useRef(new Map<number, HTMLInputElement>());
@@ -393,6 +395,21 @@ export function HexEditor({
   const hideSearchPanel = useCallback(() => {
     onSearchPanelVisibleChange(false);
   }, [onSearchPanelVisibleChange]);
+
+  useEffect(() => {
+    const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
+      if (!isFindShortcut(event) || !eventTargetsElement(editorRef.current, event)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      showSearchPanel();
+    };
+
+    window.addEventListener('keydown', handleFindShortcut, true);
+    return () => window.removeEventListener('keydown', handleFindShortcut, true);
+  }, [showSearchPanel]);
 
   useEffect(() => {
     if (!searchPanelVisible) {
@@ -1048,14 +1065,14 @@ export function HexEditor({
 
   if (bytes.length === 0) {
     return (
-      <div className="rton-hex-editor" style={style}>
+      <div ref={editorRef} className="rton-hex-editor" style={style}>
         <div className="rton-hex-empty">{t('hex.empty')}</div>
       </div>
     );
   }
 
   return (
-    <div className="rton-hex-editor" style={style} onKeyDown={handleEditorKeyDown}>
+    <div ref={editorRef} className="rton-hex-editor" style={style} onKeyDown={handleEditorKeyDown}>
         <div className="rton-hex-summary">
           <span>{bytes.length.toLocaleString()} bytes</span>
           <span>Offset {toOffsetHex(selectedOffset, offsetColumnWidth - 2)}</span>
