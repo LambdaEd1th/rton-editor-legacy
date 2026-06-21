@@ -1,16 +1,30 @@
 import { encodeRtonValueWire, type RtonValue } from './rton-value';
-import init, { encode_value_to_rton, encrypt_rton_data } from './wasm/rton-editor/rton_editor_wasm';
+import init, {
+  decode_rton_to_value,
+  decrypt_rton_data,
+  encode_value_to_rton,
+  encrypt_rton_data,
+} from './wasm/rton-editor/rton_editor_wasm';
 
 type ByteTransformTarget = {
   compact: boolean;
   encrypted: boolean;
 };
 
-type ByteTransformRequest = {
-  id: number;
-  target: ByteTransformTarget;
-  value: RtonValue;
-};
+type ByteTransformRequest =
+  | {
+      id: number;
+      kind: 'value';
+      target: ByteTransformTarget;
+      value: RtonValue;
+    }
+  | {
+      id: number;
+      kind: 'bytes';
+      source: ByteTransformTarget;
+      target: ByteTransformTarget;
+      bytes: Uint8Array;
+    };
 
 type ByteTransformResponse =
   | {
@@ -37,8 +51,9 @@ async function handleRequest(request: ByteTransformRequest) {
   try {
     await ensureWasmReady();
     const startedAt = performance.now();
-    const encoded = encode_value_to_rton(encodeRtonValueWire(request.value), request.target.compact);
-    const bytes = request.target.encrypted ? encrypt_rton_data(encoded) : encoded;
+    const bytes = request.kind === 'bytes'
+      ? transformRtonBytes(request.bytes, request.source, request.target)
+      : transformRtonValue(request.value, request.target);
     const response: ByteTransformResponse = {
       id: request.id,
       target: request.target,
@@ -63,6 +78,26 @@ async function ensureWasmReady() {
     wasmReady = init().then(() => undefined);
   }
   await wasmReady;
+}
+
+function transformRtonValue(value: RtonValue, target: ByteTransformTarget) {
+  const encoded = encode_value_to_rton(encodeRtonValueWire(value), target.compact);
+  return target.encrypted ? encrypt_rton_data(encoded) : encoded;
+}
+
+function transformRtonBytes(bytes: Uint8Array, source: ByteTransformTarget, target: ByteTransformTarget) {
+  if (source.compact === target.compact && source.encrypted === target.encrypted) {
+    return bytes;
+  }
+
+  const plainBytes = source.encrypted ? decrypt_rton_data(bytes) : bytes;
+  if (source.compact === target.compact) {
+    return target.encrypted ? encrypt_rton_data(plainBytes) : plainBytes;
+  }
+
+  const valueWire = decode_rton_to_value(plainBytes);
+  const encoded = encode_value_to_rton(valueWire, target.compact);
+  return target.encrypted ? encrypt_rton_data(encoded) : encoded;
 }
 
 function errorMessage(error: unknown) {

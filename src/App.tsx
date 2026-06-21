@@ -216,6 +216,34 @@ type ByteTransformWorkerResponse =
       error: string;
     };
 
+type ByteTransformWorkerRequest =
+  | {
+      id: number;
+      kind: 'value';
+      target: RtonBinaryEncoding;
+      value: RtonValue;
+    }
+  | {
+      id: number;
+      kind: 'bytes';
+      source: RtonBinaryEncoding;
+      target: RtonBinaryEncoding;
+      bytes: Uint8Array;
+    };
+
+type ByteTransformWorkerPayload =
+  | {
+      kind: 'value';
+      target: RtonBinaryEncoding;
+      value: RtonValue;
+    }
+  | {
+      kind: 'bytes';
+      source: RtonBinaryEncoding;
+      target: RtonBinaryEncoding;
+      bytes: Uint8Array;
+    };
+
 type ByteTransformState = {
   status: 'idle' | 'running' | 'ready' | 'error';
   target: RtonBinaryEncoding | null;
@@ -317,6 +345,15 @@ export function App() {
   const formatRequestId = useRef(0);
   const byteTransformWorker = useRef<Worker | null>(null);
   const byteTransformRequestId = useRef(0);
+  const byteTransformPromises = useRef(
+    new Map<
+      number,
+      {
+        resolve: (bytes: Uint8Array) => void;
+        reject: (error: Error) => void;
+      }
+    >(),
+  );
   const themeOptions = useMemo<Array<RtonInlineSelectOption<ThemePreference>>>(
     () => [
       { value: 'system', label: t('theme.system') },
@@ -447,17 +484,31 @@ export function App() {
 
   const terminateByteTransformWorker = useCallback(() => {
     byteTransformRequestId.current += 1;
+    for (const pending of byteTransformPromises.current.values()) {
+      pending.reject(new Error(t('status.byteTransformCancelled')));
+    }
+    byteTransformPromises.current.clear();
     if (byteTransformWorker.current) {
       byteTransformWorker.current.terminate();
       byteTransformWorker.current = null;
     }
-  }, []);
+  }, [t]);
 
   const getByteTransformWorker = useCallback(() => {
     if (!byteTransformWorker.current) {
       byteTransformWorker.current = new Worker(new URL('./byte-transform-worker.ts', import.meta.url), { type: 'module' });
       byteTransformWorker.current.addEventListener('message', (event: MessageEvent<ByteTransformWorkerResponse>) => {
         const response = event.data;
+        const pending = byteTransformPromises.current.get(response.id);
+        if (pending) {
+          byteTransformPromises.current.delete(response.id);
+          if (response.ok) {
+            pending.resolve(response.bytes);
+          } else {
+            pending.reject(new Error(response.error));
+          }
+        }
+
         if (response.id !== byteTransformRequestId.current) {
           return;
         }
@@ -487,6 +538,10 @@ export function App() {
       byteTransformWorker.current.addEventListener('error', (event) => {
         event.preventDefault();
         const message = event instanceof ErrorEvent && event.message ? event.message : t('status.hexWorkerError');
+        for (const pending of byteTransformPromises.current.values()) {
+          pending.reject(new Error(message));
+        }
+        byteTransformPromises.current.clear();
         setByteTransformState((current) => ({
           status: 'error',
           target: current.target,
@@ -498,6 +553,10 @@ export function App() {
       });
       byteTransformWorker.current.addEventListener('messageerror', () => {
         const message = t('status.hexWorkerUnreadable');
+        for (const pending of byteTransformPromises.current.values()) {
+          pending.reject(new Error(message));
+        }
+        byteTransformPromises.current.clear();
         setByteTransformState((current) => ({
           status: 'error',
           target: current.target,
@@ -510,6 +569,26 @@ export function App() {
     }
     return byteTransformWorker.current;
   }, [t, updateStatus]);
+
+  const runByteTransformInWorker = useCallback(
+    (payload: ByteTransformWorkerPayload) => {
+      terminateByteTransformWorker();
+      const requestId = byteTransformRequestId.current + 1;
+      byteTransformRequestId.current = requestId;
+      const request = { id: requestId, ...payload } satisfies ByteTransformWorkerRequest;
+      const transfer: Transferable[] | null = payload.kind === 'bytes' ? [payload.bytes.buffer as ArrayBuffer] : null;
+      return new Promise<Uint8Array>((resolve, reject) => {
+        byteTransformPromises.current.set(requestId, { resolve, reject });
+        const worker = getByteTransformWorker();
+        if (transfer) {
+          worker.postMessage(request, transfer);
+        } else {
+          worker.postMessage(request);
+        }
+      });
+    },
+    [getByteTransformWorker, terminateByteTransformWorker],
+  );
 
   const snapshotActiveTab = useCallback(
     (): EditorTab | null => {
@@ -925,7 +1004,7 @@ export function App() {
 	    hexVariantNeeded && byteTransformState.bytes && sameNullableRtonEncoding(byteTransformState.target, targetBinaryEncoding)
 	      ? byteTransformState.bytes
 	      : binaryBytes;
-	  const canGenerateHexVariant = hexVariantNeeded && wasmReady && currentValue !== null;
+	  const canGenerateHexVariant = hexVariantNeeded && wasmReady && binaryBytes !== null && binaryEncoding !== null;
 	  const outputText = hasActiveFile
 	    ? editorSurface === 'hex' && binaryBytes
 	      ? `${formatBytes((displayedHexBytes ?? binaryBytes).byteLength)} · ${
@@ -957,10 +1036,8 @@ export function App() {
 
     try {
 	      if (editorSurface === 'hex' && binaryBytes) {
-	        const outputBytes = hexVariantNeeded
-	          ? byteTransformState.bytes ?? encodeCurrentRtonBytes(currentValueRef.current, compactOutput, encryptOutput, parseError)
-	          : binaryBytes;
-	        setLastOutputBytes(outputBytes.byteLength);
+	        const outputBytes = hexVariantNeeded ? byteTransformState.bytes : binaryBytes;
+	        setLastOutputBytes(outputBytes?.byteLength ?? null);
 	        updateStatus(t('format.exportable', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
 	        return;
 	      }
@@ -969,8 +1046,7 @@ export function App() {
       if (!value) {
         throw new Error(parseError ?? t('status.noSearchableValue'));
       }
-      const bytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
-      setLastOutputBytes(bytes.byteLength);
+      setLastOutputBytes(null);
       updateStatus(t('format.exportable', { label: viewModeRef.current.toUpperCase() }), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
@@ -979,9 +1055,7 @@ export function App() {
 	    activeTabId,
 	    binaryBytes,
 	    byteTransformState.bytes,
-	    compactOutput,
 	    editorSurface,
-	    encryptOutput,
 	    hexVariantNeeded,
 	    parseError,
 	    t,
@@ -990,26 +1064,9 @@ export function App() {
 	    wasmReady,
 	  ]);
 
-  const refreshOutputBytesForOptions = useCallback(
-    (compact: boolean, encrypted: boolean) => {
-      if (lastOutputBytes === null || activeTabId === null || !wasmReady) {
-        return;
-      }
-
-      const value = currentValueRef.current;
-      if (!value) {
-        return;
-      }
-
-      try {
-        setLastOutputBytes(encodeRtonOutputBytes(value, compact, encrypted).byteLength);
-      } catch (error) {
-        setLastOutputBytes(null);
-        updateStatus(errorMessage(error), 'error');
-      }
-    },
-    [activeTabId, lastOutputBytes, updateStatus, wasmReady],
-  );
+  const refreshOutputBytesForOptions = useCallback(() => {
+    setLastOutputBytes(null);
+  }, []);
 
   useEffect(() => {
     viewModeRef.current = viewMode;
@@ -1153,7 +1210,7 @@ export function App() {
   } as CSSProperties;
 
   useEffect(() => {
-    if (!canGenerateHexVariant || !currentValue) {
+    if (!canGenerateHexVariant || !binaryBytes || !binaryEncoding) {
       terminateByteTransformWorker();
       resetByteTransformState();
       return;
@@ -1172,16 +1229,21 @@ export function App() {
     });
     updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(target, t) }), 'warn');
 
+    const sourceBytesForWorker = new Uint8Array(binaryBytes);
     getByteTransformWorker().postMessage(
       {
         id: requestId,
+        kind: 'bytes',
+        source: binaryEncoding,
         target,
-        value: currentValue,
+        bytes: sourceBytesForWorker,
       },
+      [sourceBytesForWorker.buffer],
     );
   }, [
+    binaryBytes,
+    binaryEncoding,
     canGenerateHexVariant,
-    currentValue,
     getByteTransformWorker,
     resetByteTransformState,
     targetBinaryEncoding,
@@ -1528,7 +1590,7 @@ export function App() {
     }
   };
 
-  const downloadRton = () => {
+  const downloadRton = async () => {
     if (activeTabId === null) {
       updateStatus(t('status.openFileFirst'), 'warn');
       return;
@@ -1540,10 +1602,19 @@ export function App() {
     }
 
 	    try {
-	      if (editorSurface === 'hex' && binaryBytes) {
-	        const outputBytes = hexVariantNeeded
-	          ? byteTransformState.bytes ?? encodeCurrentRtonBytes(currentValueRef.current, compactOutput, encryptOutput, parseError)
-	          : binaryBytes;
+	      if (binaryBytes && binaryEncoding) {
+	        const readyVariant =
+	          byteTransformState.bytes && sameNullableRtonEncoding(byteTransformState.target, targetBinaryEncoding)
+	            ? byteTransformState.bytes
+	            : null;
+	        const outputBytes = sameRtonEncoding(binaryEncoding, targetBinaryEncoding)
+	          ? binaryBytes
+	          : readyVariant ?? await runByteTransformInWorker({
+	              kind: 'bytes',
+	              source: binaryEncoding,
+	              target: targetBinaryEncoding,
+	              bytes: new Uint8Array(binaryBytes),
+	            });
 	        setLastOutputBytes(outputBytes.byteLength);
 	        downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
 	        updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
@@ -1554,10 +1625,15 @@ export function App() {
       if (!value) {
         throw new Error(parseError ?? t('status.noSearchableValue'));
       }
-      const outputBytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
+      updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(targetBinaryEncoding, t) }), 'warn');
+      const outputBytes = await runByteTransformInWorker({
+        kind: 'value',
+        target: targetBinaryEncoding,
+        value,
+      });
       setLastOutputBytes(outputBytes.byteLength);
       downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
-      updateStatus(t('format.generated', { label: `${formatRtonEncoding({ compact: compactOutput, encrypted: encryptOutput }, t)} RTON` }), 'ok');
+      updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
@@ -1863,7 +1939,7 @@ export function App() {
               onChange={(event) => {
                 const nextCompact = event.currentTarget.checked;
                 setCompactOutput(nextCompact);
-                refreshOutputBytesForOptions(nextCompact, encryptOutput);
+                refreshOutputBytesForOptions();
               }}
             />
             <span className="rton-switch-label">{t('toolbar.compact')}</span>
@@ -1878,7 +1954,7 @@ export function App() {
               onChange={(event) => {
                 const nextEncrypt = event.currentTarget.checked;
                 setEncryptOutput(nextEncrypt);
-                refreshOutputBytesForOptions(compactOutput, nextEncrypt);
+                refreshOutputBytesForOptions();
               }}
             />
             <span className="rton-switch-label">{t('toolbar.encrypted')}</span>
@@ -1888,7 +1964,7 @@ export function App() {
             <CheckCircle2 />
             {t('toolbar.validate')}
           </button>
-          <button type="button" onClick={downloadRton} disabled={!hasActiveFile || !wasmReady} className={buttonClass('primary')}>
+          <button type="button" onClick={() => void downloadRton()} disabled={!hasActiveFile || !wasmReady} className={buttonClass('primary')}>
             <Download />
             RTON
           </button>
@@ -4739,13 +4815,6 @@ function sameNullableRtonEncoding(left: RtonBinaryEncoding | null, right: RtonBi
 function formatRtonEncoding(encoding: RtonBinaryEncoding, t?: Translator) {
   const encryptedLabel = t ? t('toolbar.encrypted') : translate('toolbar.encrypted');
   return `${encoding.compact ? 'Compact' : 'Standard'}${encoding.encrypted ? ` · ${encryptedLabel}` : ''}`;
-}
-
-function encodeCurrentRtonBytes(value: RtonValue | null, compact: boolean, encrypted: boolean, parseError: string | null, t: Translator = translate) {
-  if (!value) {
-    throw new Error(parseError ?? t('status.noSearchableValue'));
-  }
-  return encodeRtonOutputBytes(value, compact, encrypted);
 }
 
 function parseJsonTextToRtonValue(json: string) {
