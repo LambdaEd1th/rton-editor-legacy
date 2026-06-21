@@ -71,6 +71,7 @@ const messages: Record<string, MessageDict> = {
     'panel.hexUnavailable': '不可用：{message}',
     'panel.hexGenerating': '{encoding} 生成中',
     'panel.hexNotGenerated': '未生成',
+    'panel.hexPreviewSkipped': '{encoding} 自动预览已跳过（超过 {limit}），导出时再生成',
     'panel.hexOnlyRton': '仅 RTON Hex 视图可用',
 
     'tabs.openFiles': '已打开文件',
@@ -100,6 +101,7 @@ const messages: Record<string, MessageDict> = {
     'status.generatingHex': '正在后台生成 {encoding} Hex',
     'status.hexGenerated': '{encoding} Hex 已生成，用时 {duration}',
     'status.hexFailed': '{encoding} Hex 生成失败：{message}',
+    'status.hexPreviewSkipped': '文件较大（{size}），已跳过自动 Hex 变体预览；导出时仍会生成',
     'status.hexWorkerError': 'Hex 转换 worker 出错',
     'status.hexWorkerUnreadable': 'Hex 转换 worker 返回了无法读取的数据',
     'status.byteTransformCancelled': '字节转换已取消',
@@ -293,6 +295,7 @@ const messages: Record<string, MessageDict> = {
     'panel.hexUnavailable': 'Unavailable: {message}',
     'panel.hexGenerating': '{encoding} generating',
     'panel.hexNotGenerated': 'Not generated',
+    'panel.hexPreviewSkipped': '{encoding} auto preview skipped (over {limit}); generated on export',
     'panel.hexOnlyRton': 'Only available in RTON Hex view',
 
     'tabs.openFiles': 'Open files',
@@ -322,6 +325,7 @@ const messages: Record<string, MessageDict> = {
     'status.generatingHex': 'Generating {encoding} Hex in the background',
     'status.hexGenerated': '{encoding} Hex generated in {duration}',
     'status.hexFailed': '{encoding} Hex failed: {message}',
+    'status.hexPreviewSkipped': 'Large file ({size}); skipped automatic Hex variant preview. Export will still generate it.',
     'status.hexWorkerError': 'Hex conversion worker failed',
     'status.hexWorkerUnreadable': 'Hex conversion worker returned unreadable data',
     'status.byteTransformCancelled': 'Byte transform cancelled',
