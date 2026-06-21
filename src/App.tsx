@@ -1758,15 +1758,6 @@ export function App() {
             <Redo2 />
             {t('toolbar.redo')}
           </button>
-          <button
-            type="button"
-            onClick={() => runEditorToolbarAction('find')}
-            disabled={!hasActiveFile}
-            className={buttonClass('secondary')}
-          >
-            <Search />
-            {t('toolbar.find')}
-          </button>
         </>
       ),
     },
