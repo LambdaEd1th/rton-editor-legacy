@@ -71,6 +71,9 @@ const editorTheme = EditorView.theme(
     '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
       backgroundColor: 'var(--color-editor-selection)',
     },
+    '& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+      backgroundColor: 'var(--color-editor-selection)',
+    },
     '.cm-panels': {
       backgroundColor: 'var(--color-surface-raised)',
       borderColor: 'var(--color-border)',

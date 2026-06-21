@@ -142,7 +142,7 @@
   --color-code-punctuation: #687386;
   --color-code-meta: #9a6700;
   --color-editor-active-line: rgba(30, 64, 92, 0.045);
-  --color-editor-selection: rgba(37, 99, 235, 0.18);
+  --color-editor-selection: rgba(37, 99, 235, 0.12);
   --color-editor-search-match: rgba(99, 102, 241, 0.14);
   --color-editor-search-match-border: rgba(79, 70, 229, 0.24);
   --color-editor-search-current: rgba(99, 102, 241, 0.24);
