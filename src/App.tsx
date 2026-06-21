@@ -1,17 +1,12 @@
 import {
   useCallback,
   useEffect,
-  useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
 } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Activity,
   CheckCheck,
@@ -49,12 +44,21 @@ import {
   decodeRtonValueWire,
   encodeRtonValueWire,
   rtonValueToPlain,
-  type RtonIntegerKind,
   type RtonValue,
 } from './rton-value';
 import { sampleJson } from './sample';
 import { locateRtonValueOffset } from './rton-offset-map';
 import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
+import { RtonInlineSelect, type RtonInlineSelectOption } from './components/RtonInlineSelect';
+import { RtonValueInspector } from './components/RtonValueInspector';
+import {
+  isRtonNumberKind,
+  previewRtonValue,
+  replaceRtonValueAtPath,
+  type RtonValuePath,
+  type SearchMatch,
+  type SearchState,
+} from './rton-value-editing';
 
 type JsonScalar = string | number | boolean | null;
 type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
@@ -66,10 +70,6 @@ type ThemePreference = 'system' | 'light' | 'dark';
 type StructuredFormatter = (value: RtonValue, mode: StructuredFormatMode) => string;
 type Tone = 'ok' | 'warn' | 'error';
 type StatusState = { message: string; tone: Tone };
-type RtonValuePathSegment = { kind: 'array'; index: number } | { kind: 'object'; index: number };
-type RtonValuePath = RtonValuePathSegment[];
-
-type RtonInlineSelectOption<T extends string> = { value: T; label: string };
 
 type Stats = {
   nodes: number;
@@ -83,17 +83,6 @@ type Stats = {
   binaries: number;
   maxDepth: number;
 };
-
-type SearchMatch = {
-  path: string;
-  preview: string;
-  valuePath: RtonValuePath;
-};
-
-type SearchState =
-  | { kind: 'idle' }
-  | { kind: 'message'; message: string }
-  | { kind: 'results'; query: string; matches: SearchMatch[]; scanned: number; done: boolean; capped: boolean };
 
 type EditorTab = {
   id: number;
@@ -221,7 +210,6 @@ type SearchFrame =
   | { kind: 'array'; value: RtonValue[]; path: string; valuePath: RtonValuePath; index: number }
   | { kind: 'object'; value: Array<{ key: string; value: RtonValue }>; path: string; valuePath: RtonValuePath; index: number };
 
-const TREE_CHILD_LIMIT = 160;
 const SEARCH_MATCH_LIMIT = 120;
 const SEARCH_CHUNK_MS = 10;
 const SEARCH_DEBOUNCE_MS = 140;
@@ -2124,9 +2112,10 @@ export function App() {
             </div>
             <div className="min-h-0 overflow-auto">
               <div className="p-3 font-mono text-xs">
-                <InspectorContent
+                <RtonValueInspector
                   state={searchState}
                   value={currentValue}
+                  searchMatchLimit={SEARCH_MATCH_LIMIT}
                   onChange={updateRtonValueNode}
                   onNavigate={navigateToRtonValueNode}
                   onError={(message) => updateStatus(message, 'error')}
@@ -2154,523 +2143,6 @@ export function App() {
         </a>
       </footer>
     </main>
-  );
-}
-
-function InspectorContent({
-  state,
-  value,
-  onChange,
-  onNavigate,
-  onError,
-}: {
-  state: SearchState;
-  value: RtonValue | null;
-  onChange: (path: RtonValuePath, value: RtonValue) => void;
-  onNavigate: (path: RtonValuePath) => void;
-  onError: (message: string) => void;
-}) {
-  const { t } = useI18n();
-  if (state.kind === 'message') {
-    return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">{state.message}</div>;
-  }
-
-  if (state.kind === 'results') {
-    if (state.matches.length === 0) {
-      return (
-        <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">
-          {state.done ? t('inspector.noMatches') : t('inspector.searchingScanned', { count: state.scanned.toLocaleString() })}
-        </div>
-      );
-    }
-
-    const summary = state.capped
-      ? t('inspector.capped', { limit: SEARCH_MATCH_LIMIT.toLocaleString() })
-      : state.done
-        ? t('inspector.doneSummary', { matches: state.matches.length.toLocaleString(), scanned: state.scanned.toLocaleString() })
-        : t('inspector.searchingSummary', { matches: state.matches.length.toLocaleString() });
-
-    return (
-      <div className="grid gap-1">
-        <div className="sticky top-0 z-10 mb-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-[var(--color-text-muted)]">
-          {summary} · {state.query}
-        </div>
-        {state.matches.map((match) => (
-          <div key={`${match.path}:${match.preview}`} className="rton-search-result-row" onClick={() => onNavigate(match.valuePath)}>
-            <button
-              type="button"
-              className="rton-search-result-path"
-              onClick={(event) => {
-                event.stopPropagation();
-                onNavigate(match.valuePath);
-              }}
-            >
-              {match.path}
-            </button>
-            <span className="rton-search-result-preview">{match.preview}</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (!value) {
-    return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">{t('inspector.noValue')}</div>;
-  }
-
-  return <RtonValueTreeNode label="$" value={value} path={[]} depth={0} onChange={onChange} onNavigate={onNavigate} onError={onError} />;
-}
-
-function RtonValueTreeNode({
-  label,
-  value,
-  path,
-  depth,
-  onChange,
-  onNavigate,
-  onError,
-}: {
-  label: string;
-  value: RtonValue;
-  path: RtonValuePath;
-  depth: number;
-  onChange: (path: RtonValuePath, value: RtonValue) => void;
-  onNavigate: (path: RtonValuePath) => void;
-  onError: (message: string) => void;
-}) {
-  const [open, setOpen] = useState(depth === 0);
-  const navigate = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onNavigate(path);
-  };
-  const navigateOnKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      navigate(event);
-    }
-  };
-  const navigateFromRow = (event: ReactMouseEvent<HTMLElement>) => {
-    if ((event.target as HTMLElement).closest('.rton-inline-select-control, input, button')) {
-      return;
-    }
-    onNavigate(path);
-  };
-
-  if (value.kind === 'array') {
-    return (
-      <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="my-0.5">
-        <summary className="cursor-pointer rounded px-1 py-1 hover:bg-[var(--color-control-hover)]" onClick={navigateFromRow}>
-          <span
-            role="button"
-            tabIndex={0}
-            className="cursor-pointer text-[var(--color-accent-text)] hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)]"
-            onClick={navigate}
-            onKeyDown={navigateOnKeyDown}
-          >
-            {label}
-          </span>
-          <span className="ml-2 text-[var(--color-text-muted)]">array · {value.items.length}</span>
-          <RtonValueKindSelect value={value} path={path} onChange={onChange} onError={onError} className="ml-2" />
-        </summary>
-        {open && (
-          <RtonValueTreeChildren
-            entries={value.items.map((item, index) => ({
-              key: `[${index}]`,
-              value: item,
-              path: [...path, { kind: 'array' as const, index }],
-            }))}
-            depth={depth + 1}
-            onChange={onChange}
-            onNavigate={onNavigate}
-            onError={onError}
-          />
-        )}
-      </details>
-    );
-  }
-
-  if (value.kind === 'object') {
-    return (
-      <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="my-0.5">
-        <summary className="cursor-pointer rounded px-1 py-1 hover:bg-[var(--color-control-hover)]" onClick={navigateFromRow}>
-          <span
-            role="button"
-            tabIndex={0}
-            className="cursor-pointer text-[var(--color-accent-text)] hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)]"
-            onClick={navigate}
-            onKeyDown={navigateOnKeyDown}
-          >
-            {label}
-          </span>
-          <span className="ml-2 text-[var(--color-text-muted)]">object · {value.entries.length}</span>
-          <RtonValueKindSelect value={value} path={path} onChange={onChange} onError={onError} className="ml-2" />
-        </summary>
-        {open && (
-          <RtonValueTreeChildren
-            entries={value.entries.map((entry, index) => ({
-              key: entry.key,
-              value: entry.value,
-              path: [...path, { kind: 'object' as const, index }],
-            }))}
-            depth={depth + 1}
-            onChange={onChange}
-            onNavigate={onNavigate}
-            onError={onError}
-          />
-        )}
-      </details>
-    );
-  }
-
-  return (
-    <div className="rton-value-scalar-row" onClick={() => onNavigate(path)}>
-      <button
-        type="button"
-        className="rton-value-node-link"
-        onClick={(event) => {
-          event.stopPropagation();
-          onNavigate(path);
-        }}
-      >
-        {label}
-      </button>
-      <div className="rton-value-kind-cell">
-        <RtonValueKindSelect value={value} path={path} onChange={onChange} onError={onError} />
-      </div>
-      <div className="rton-value-editor-cell">
-        <RtonScalarEditor value={value} path={path} onChange={onChange} onError={onError} />
-      </div>
-    </div>
-  );
-}
-
-function RtonValueTreeChildren({
-  entries,
-  depth,
-  onChange,
-  onNavigate,
-  onError,
-}: {
-  entries: ReadonlyArray<{ key: string; value: RtonValue; path: RtonValuePath }>;
-  depth: number;
-  onChange: (path: RtonValuePath, value: RtonValue) => void;
-  onNavigate: (path: RtonValuePath) => void;
-  onError: (message: string) => void;
-}) {
-  const { t } = useI18n();
-  const shown = entries.slice(0, TREE_CHILD_LIMIT);
-
-  return (
-    <div className="rton-value-tree-children" style={{ '--rton-value-depth': depth } as CSSProperties}>
-      {shown.map((entry, index) => (
-        <RtonValueTreeNode
-          key={`${entry.key}:${index}`}
-          label={entry.key}
-          value={entry.value}
-          path={entry.path}
-          depth={depth}
-          onChange={onChange}
-          onNavigate={onNavigate}
-          onError={onError}
-        />
-      ))}
-      {entries.length > shown.length && (
-        <div className="my-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2 text-[var(--color-text-muted)]">
-          {t('inspector.truncated', { shown: shown.length.toLocaleString(), total: entries.length.toLocaleString() })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const RTON_VALUE_KINDS: RtonValue['kind'][] = [
-  'null',
-  'bool',
-  'i8',
-  'u8',
-  'i16',
-  'u16',
-  'i32',
-  'u32',
-  'i64',
-  'u64',
-  'var-i32',
-  'var-u32',
-  'var-i64',
-  'var-u64',
-  'f32',
-  'f64',
-  'string',
-  'binary',
-  'rtid',
-  'array',
-  'object',
-];
-const RTON_VALUE_KIND_OPTIONS = RTON_VALUE_KINDS.map((kind) => ({ value: kind, label: kind }));
-
-function RtonInlineSelect<T extends string>({
-  value,
-  options,
-  onChange,
-  ariaLabel,
-  variant = 'compact',
-  className,
-}: {
-  value: T;
-  options: ReadonlyArray<RtonInlineSelectOption<T>>;
-  onChange: (value: T) => void;
-  ariaLabel: string;
-  variant?: 'compact' | 'toolbar';
-  className?: string;
-}) {
-  const controlRef = useRef<HTMLSpanElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const generatedId = useId();
-  const [open, setOpen] = useState(false);
-  const selected = options.find((option) => option.value === value);
-  const menuId = `${generatedId}-menu`;
-
-  const positionMenu = useCallback(() => {
-    const control = controlRef.current;
-    const menu = menuRef.current;
-    if (!control || !menu) {
-      return;
-    }
-
-    const viewportPadding = 8;
-    const menuGap = 6;
-    const controlRect = control.getBoundingClientRect();
-    const menuMinWidth = Math.max(variant === 'toolbar' ? 138 : 112, Math.round(controlRect.width));
-    menu.style.setProperty('--rton-select-menu-min-width', `${menuMinWidth}px`);
-    menu.style.setProperty('--rton-select-menu-max-height', `${Math.max(96, window.innerHeight - viewportPadding * 2)}px`);
-    menu.style.removeProperty('--rton-select-menu-width');
-
-    const optionWidth = Math.max(
-      menuMinWidth,
-      ...Array.from(menu.querySelectorAll('button')).map((button) => button.scrollWidth + (variant === 'toolbar' ? 10 : 12)),
-    );
-    const menuWidth = Math.min(Math.ceil(optionWidth), window.innerWidth - viewportPadding * 2);
-    menu.style.setProperty('--rton-select-menu-width', `${menuWidth}px`);
-
-    const menuHeight = menu.getBoundingClientRect().height || 0;
-    const maxLeft = window.innerWidth - viewportPadding - menuWidth;
-    const left = Math.max(viewportPadding, Math.min(controlRect.left, maxLeft));
-    const belowTop = controlRect.bottom + menuGap;
-    const aboveTop = controlRect.top - menuGap - menuHeight;
-    const hasMoreSpaceAbove = controlRect.top - viewportPadding > window.innerHeight - controlRect.bottom - viewportPadding;
-    const top =
-      belowTop + menuHeight <= window.innerHeight - viewportPadding || !hasMoreSpaceAbove
-        ? Math.min(belowTop, window.innerHeight - viewportPadding - menuHeight)
-        : aboveTop;
-
-    menu.style.setProperty('--rton-select-menu-left', `${Math.round(left)}px`);
-    menu.style.setProperty('--rton-select-menu-top', `${Math.round(Math.max(viewportPadding, top))}px`);
-  }, [variant]);
-
-  useLayoutEffect(() => {
-    if (open) {
-      positionMenu();
-    }
-  }, [open, options, positionMenu, value]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (controlRef.current?.contains(target) || menuRef.current?.contains(target)) {
-        return;
-      }
-      setOpen(false);
-    };
-    const reposition = () => positionMenu();
-
-    document.addEventListener('pointerdown', closeOnOutsidePointer);
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsidePointer);
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
-    };
-  }, [open, positionMenu]);
-
-  const selectOption = useCallback(
-    (nextValue: T) => {
-      setOpen(false);
-      onChange(nextValue);
-      requestAnimationFrame(() => controlRef.current?.focus());
-    },
-    [onChange],
-  );
-
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
-      event.preventDefault();
-      setOpen(true);
-    } else if (event.key === 'Escape') {
-      setOpen(false);
-    }
-  };
-
-  return (
-    <>
-      <span
-        ref={controlRef}
-        className={cx('rton-inline-select-control', variant === 'toolbar' && 'rton-inline-select-toolbar', open && 'is-open', className)}
-        role="button"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        tabIndex={0}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setOpen((current) => !current);
-        }}
-        onMouseDown={(event) => event.stopPropagation()}
-        onKeyDown={handleKeyDown}
-      >
-        <span className="rton-inline-select-value" title={selected?.label}>
-          {selected?.label ?? value}
-        </span>
-        <span className="rton-inline-select-caret">▾</span>
-      </span>
-      {open &&
-        createPortal(
-          <div
-            ref={menuRef}
-            id={menuId}
-            className={cx('rton-inline-select-menu', variant === 'toolbar' && 'rton-inline-select-menu-toolbar')}
-            role="listbox"
-            aria-label={ariaLabel}
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={cx(option.value === value && 'active')}
-                role="option"
-                aria-selected={option.value === value}
-                title={option.label}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  selectOption(option.value);
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>,
-          document.body,
-        )}
-    </>
-  );
-}
-
-function RtonValueKindSelect({
-  value,
-  path,
-  onChange,
-  onError,
-  className,
-}: {
-  value: RtonValue;
-  path: RtonValuePath;
-  onChange: (path: RtonValuePath, value: RtonValue) => void;
-  onError: (message: string) => void;
-  className?: string;
-}) {
-  const { t } = useI18n();
-  return (
-    <RtonInlineSelect
-      value={value.kind}
-      options={RTON_VALUE_KIND_OPTIONS}
-      ariaLabel={t('inspector.chooseValueType')}
-      className={cx('rton-inline-select-kind', className)}
-      onChange={(nextKind) => {
-        try {
-          onChange(path, convertRtonValueKind(value, nextKind));
-        } catch (error) {
-          onError(errorMessage(error));
-        }
-      }}
-    />
-  );
-}
-
-function RtonScalarEditor({
-  value,
-  path,
-  onChange,
-  onError,
-}: {
-  value: RtonValue;
-  path: RtonValuePath;
-  onChange: (path: RtonValuePath, value: RtonValue) => void;
-  onError: (message: string) => void;
-}) {
-  const { t } = useI18n();
-  const [text, setText] = useState(() => rtonScalarEditText(value));
-
-  useEffect(() => {
-    setText(rtonScalarEditText(value));
-  }, [value]);
-
-  if (value.kind === 'null') {
-    return <span className="text-[var(--color-text-muted)]">null</span>;
-  }
-
-  if (value.kind === 'bool') {
-    return (
-      <RtonInlineSelect
-        value={String(value.value)}
-        options={[
-          { value: 'true', label: 'true' },
-          { value: 'false', label: 'false' },
-        ]}
-        ariaLabel={t('inspector.chooseBool')}
-        className="rton-inline-select-bool"
-        onChange={(nextValue) => onChange(path, { kind: 'bool', value: nextValue === 'true' })}
-      />
-    );
-  }
-
-  const commit = () => {
-    try {
-      const nextValue = updateRtonScalarText(value, text);
-      onChange(path, nextValue);
-    } catch (error) {
-      onError(errorMessage(error));
-      setText(rtonScalarEditText(value));
-    }
-  };
-
-  return (
-    <input
-      value={text}
-      title={rtonScalarPreview(value)}
-      className={cx(
-        'h-6 w-full min-w-0 rounded border border-transparent bg-transparent px-1 text-[11px] text-[var(--color-text-strong)] hover:border-[var(--color-border)] hover:bg-[var(--color-control)] focus:border-[var(--color-accent-border)] focus:bg-[var(--color-control)] focus-visible:outline-none',
-        rtonValueClass(value),
-      )}
-      onChange={(event) => setText(event.currentTarget.value)}
-      onMouseDown={(event) => event.stopPropagation()}
-      onClick={(event) => event.stopPropagation()}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.currentTarget.blur();
-        } else if (event.key === 'Escape') {
-          setText(rtonScalarEditText(value));
-          event.currentTarget.blur();
-        }
-      }}
-    />
   );
 }
 
@@ -2730,7 +2202,7 @@ function runChunkedSearch(
       }
 
       scanned += 1;
-      const preview = previewValue(frame.value);
+      const preview = previewRtonValue(frame.value);
       if (frame.path.toLowerCase().includes(query) || preview.toLowerCase().includes(query)) {
         matches.push({ path: frame.path, preview, valuePath: frame.valuePath });
       }
@@ -2813,222 +2285,6 @@ function emptyStats(): Stats {
     binaries: 0,
     maxDepth: 0,
   };
-}
-
-function previewValue(value: RtonValue): string {
-  if (value.kind === 'array') {
-    return `array(${value.items.length})`;
-  }
-  if (value.kind === 'object') {
-    return `object(${value.entries.length})`;
-  }
-  return `${value.kind}: ${rtonScalarPreview(value)}`;
-}
-
-function rtonValueClass(value: RtonValue): string {
-  if (value.kind === 'rtid') {
-    return 'text-[var(--color-accent-text)]';
-  }
-  if (value.kind === 'binary') {
-    return 'text-[var(--color-rton-binary)]';
-  }
-  if (value.kind === 'string') {
-    return 'text-[var(--color-rton-string)]';
-  }
-  if (isRtonNumberKind(value.kind)) {
-    return 'text-[var(--color-rton-number)]';
-  }
-  if (value.kind === 'bool') {
-    return 'text-[var(--color-rton-bool)]';
-  }
-  return 'text-[var(--color-text-subtle)]';
-}
-
-const RTON_INTEGER_RANGES: Record<RtonIntegerKind, readonly [bigint, bigint]> = {
-  i8: [-128n, 127n],
-  u8: [0n, 255n],
-  i16: [-32768n, 32767n],
-  u16: [0n, 65535n],
-  i32: [-2147483648n, 2147483647n],
-  u32: [0n, 4294967295n],
-  i64: [-9223372036854775808n, 9223372036854775807n],
-  u64: [0n, 18446744073709551615n],
-  'var-i32': [-2147483648n, 2147483647n],
-  'var-u32': [0n, 4294967295n],
-  'var-i64': [-9223372036854775808n, 9223372036854775807n],
-  'var-u64': [0n, 18446744073709551615n],
-};
-
-function isRtonIntegerKind(kind: RtonValue['kind']): kind is RtonIntegerKind {
-  return kind in RTON_INTEGER_RANGES;
-}
-
-function isRtonNumberKind(kind: RtonValue['kind']) {
-  return isRtonIntegerKind(kind) || kind === 'f32' || kind === 'f64';
-}
-
-function rtonScalarEditText(value: RtonValue) {
-  switch (value.kind) {
-    case 'null':
-      return 'null';
-    case 'bool':
-      return String(value.value);
-    case 'f32':
-    case 'f64':
-      return formatRtonFloat(value.value);
-    case 'string':
-    case 'binary':
-    case 'rtid':
-      return value.value;
-    case 'array':
-      return `array(${value.items.length})`;
-    case 'object':
-      return `object(${value.entries.length})`;
-    default:
-      return value.value;
-  }
-}
-
-function rtonScalarPreview(value: RtonValue) {
-  const text = rtonScalarEditText(value);
-  return text.length > 96 ? `${text.slice(0, 93)}...` : text;
-}
-
-function updateRtonScalarText(value: RtonValue, text: string): RtonValue {
-  if (isRtonIntegerKind(value.kind)) {
-    return { kind: value.kind, value: parseRtonIntegerText(text, value.kind) };
-  }
-
-  switch (value.kind) {
-    case 'f32':
-    case 'f64':
-      return { kind: value.kind, value: parseRtonFloatText(text) };
-    case 'string':
-    case 'binary':
-    case 'rtid':
-      return { kind: value.kind, value: text };
-    default:
-      return value;
-  }
-}
-
-function convertRtonValueKind(value: RtonValue, nextKind: RtonValue['kind']): RtonValue {
-  if (value.kind === nextKind) {
-    return value;
-  }
-
-  if (nextKind === 'array') {
-    return { kind: 'array', items: value.kind === 'array' ? value.items : [] };
-  }
-  if (nextKind === 'object') {
-    return { kind: 'object', entries: value.kind === 'object' ? value.entries : [] };
-  }
-  if (nextKind === 'null') {
-    return { kind: 'null' };
-  }
-  if (nextKind === 'bool') {
-    return { kind: 'bool', value: value.kind === 'bool' ? value.value : false };
-  }
-
-  const text = rtonScalarEditText(value);
-  const defaultValue = defaultRtonValue(nextKind);
-  try {
-    return updateRtonScalarText(defaultValue, text);
-  } catch {
-    return defaultValue;
-  }
-}
-
-function defaultRtonValue(kind: Exclude<RtonValue['kind'], 'array' | 'object'>): RtonValue {
-  if (isRtonIntegerKind(kind)) {
-    return { kind, value: '0' };
-  }
-
-  switch (kind) {
-    case 'null':
-      return { kind: 'null' };
-    case 'bool':
-      return { kind: 'bool', value: false };
-    case 'f32':
-    case 'f64':
-      return { kind, value: 0 };
-    case 'binary':
-      return { kind: 'binary', value: '$BINARY("", 0)' };
-    case 'rtid':
-      return { kind: 'rtid', value: 'RTID(0)' };
-    case 'string':
-      return { kind: 'string', value: '' };
-  }
-}
-
-function parseRtonIntegerText(text: string, kind: RtonIntegerKind) {
-  const trimmed = text.trim();
-  if (!/^[+-]?\d+$/.test(trimmed)) {
-    throw new Error(translate('error.integerRequired', { kind }));
-  }
-
-  const value = BigInt(trimmed);
-  const [min, max] = RTON_INTEGER_RANGES[kind];
-  if (value < min || value > max) {
-    throw new Error(translate('error.integerOutOfRange', { kind, min: min.toString(), max: max.toString() }));
-  }
-  return value.toString();
-}
-
-function parseRtonFloatText(text: string) {
-  const normalized = text.trim().toLowerCase();
-  if (['inf', '+inf', 'infinity', '+infinity', '.inf', '+.inf'].includes(normalized)) {
-    return Infinity;
-  }
-  if (['-inf', '-infinity', '-.inf'].includes(normalized)) {
-    return -Infinity;
-  }
-  if (['nan', '+nan', '-nan', '.nan', '+.nan', '-.nan'].includes(normalized)) {
-    return NaN;
-  }
-
-  const value = Number(text);
-  if (Number.isNaN(value)) {
-    throw new Error(translate('error.floatRequired'));
-  }
-  return value;
-}
-
-function formatRtonFloat(value: number) {
-  if (Number.isNaN(value)) {
-    return 'nan';
-  }
-  if (value === Infinity) {
-    return 'inf';
-  }
-  if (value === -Infinity) {
-    return '-inf';
-  }
-  return String(value);
-}
-
-function replaceRtonValueAtPath(root: RtonValue, path: RtonValuePath, nextValue: RtonValue): RtonValue {
-  if (path.length === 0) {
-    return nextValue;
-  }
-
-  const [head, ...tail] = path;
-  if (head.kind === 'array') {
-    if (root.kind !== 'array' || head.index < 0 || head.index >= root.items.length) {
-      throw new Error(translate('error.valuePathInvalid'));
-    }
-    const items = [...root.items];
-    items[head.index] = replaceRtonValueAtPath(items[head.index], tail, nextValue);
-    return { kind: 'array', items };
-  }
-
-  if (root.kind !== 'object' || head.index < 0 || head.index >= root.entries.length) {
-    throw new Error(translate('error.valuePathInvalid'));
-  }
-  const entries = [...root.entries];
-  const entry = entries[head.index];
-  entries[head.index] = { ...entry, value: replaceRtonValueAtPath(entry.value, tail, nextValue) };
-  return { kind: 'object', entries };
 }
 
 type TextPosition = { line: number; column: number };
