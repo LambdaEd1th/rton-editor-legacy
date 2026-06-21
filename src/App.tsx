@@ -204,14 +204,11 @@ type RtonBinaryEncoding = {
 type ByteTransformWorkerResponse =
   | {
       id: number;
-      target: RtonBinaryEncoding;
       ok: true;
       bytes: Uint8Array;
-      elapsedMs: number;
     }
   | {
       id: number;
-      target: RtonBinaryEncoding;
       ok: false;
       error: string;
     };
@@ -244,14 +241,6 @@ type ByteTransformWorkerPayload =
       bytes: Uint8Array;
     };
 
-type ByteTransformState = {
-  status: 'idle' | 'running' | 'ready' | 'error' | 'skipped';
-  target: RtonBinaryEncoding | null;
-  bytes: Uint8Array | null;
-  elapsedMs: number | null;
-  error: string | null;
-};
-
 type SearchFrame =
   | { kind: 'value'; value: RtonValue; path: string; valuePath: RtonValuePath }
   | { kind: 'array'; value: RtonValue[]; path: string; valuePath: RtonValuePath; index: number }
@@ -263,7 +252,6 @@ const SEARCH_CHUNK_MS = 10;
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
 const FORMAT_WORKER_TIMEOUT_MS = 20_000;
-const HEX_VARIANT_PREVIEW_LIMIT_BYTES = 4 * 1024 * 1024;
 const LEFT_PANEL_DEFAULT_WIDTH = 300;
 const RIGHT_PANEL_DEFAULT_WIDTH = 380;
 const PANEL_MIN_WIDTH = 220;
@@ -322,13 +310,6 @@ export function App() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
   const [lineWrapping, setLineWrapping] = useState(() => readLineWrappingPreference());
   const [editorSearchPanelVisible, setEditorSearchPanelVisible] = useState(false);
-  const [byteTransformState, setByteTransformState] = useState<ByteTransformState>({
-    status: 'idle',
-    target: null,
-    bytes: null,
-    elapsedMs: null,
-    error: null,
-  });
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const nextTabId = useRef(1);
@@ -346,7 +327,6 @@ export function App() {
   const formatRequestId = useRef(0);
   const byteTransformWorker = useRef<Worker | null>(null);
   const byteTransformRequestId = useRef(0);
-  const byteTransformPreviewRequestId = useRef<number | null>(null);
   const byteTransformPromises = useRef(
     new Map<
       number,
@@ -474,19 +454,8 @@ export function App() {
     invalidateFormatWork();
   }, [clearParseTimer, invalidateFormatWork]);
 
-  const resetByteTransformState = useCallback(() => {
-    setByteTransformState({
-      status: 'idle',
-      target: null,
-      bytes: null,
-      elapsedMs: null,
-      error: null,
-    });
-  }, []);
-
   const terminateByteTransformWorker = useCallback(() => {
     byteTransformRequestId.current += 1;
-    byteTransformPreviewRequestId.current = null;
     for (const pending of byteTransformPromises.current.values()) {
       pending.reject(new Error(t('status.byteTransformCancelled')));
     }
@@ -511,71 +480,22 @@ export function App() {
             pending.reject(new Error(response.error));
           }
         }
-
-        if (response.id !== byteTransformRequestId.current || response.id !== byteTransformPreviewRequestId.current) {
-          return;
-        }
-        byteTransformPreviewRequestId.current = null;
-
-        if (response.ok) {
-          const label = formatRtonEncoding(response.target, t);
-          setByteTransformState({
-            status: 'ready',
-            target: response.target,
-            bytes: response.bytes,
-            elapsedMs: response.elapsedMs,
-            error: null,
-          });
-          updateStatus(t('status.hexGenerated', { encoding: label, duration: formatDuration(response.elapsedMs) }), 'ok');
-        } else {
-          const label = formatRtonEncoding(response.target, t);
-          setByteTransformState({
-            status: 'error',
-            target: response.target,
-            bytes: null,
-            elapsedMs: null,
-            error: response.error,
-          });
-          updateStatus(t('status.hexFailed', { encoding: label, message: response.error }), 'error');
-        }
       });
       byteTransformWorker.current.addEventListener('error', (event) => {
         event.preventDefault();
         const message = event instanceof ErrorEvent && event.message ? event.message : t('status.hexWorkerError');
-        const hadPreviewRequest = byteTransformPreviewRequestId.current !== null;
-        byteTransformPreviewRequestId.current = null;
         for (const pending of byteTransformPromises.current.values()) {
           pending.reject(new Error(message));
         }
         byteTransformPromises.current.clear();
-        if (hadPreviewRequest) {
-          setByteTransformState((current) => ({
-            status: 'error',
-            target: current.target,
-            bytes: null,
-            elapsedMs: null,
-            error: message,
-          }));
-        }
         updateStatus(message, 'error');
       });
       byteTransformWorker.current.addEventListener('messageerror', () => {
         const message = t('status.hexWorkerUnreadable');
-        const hadPreviewRequest = byteTransformPreviewRequestId.current !== null;
-        byteTransformPreviewRequestId.current = null;
         for (const pending of byteTransformPromises.current.values()) {
           pending.reject(new Error(message));
         }
         byteTransformPromises.current.clear();
-        if (hadPreviewRequest) {
-          setByteTransformState((current) => ({
-            status: 'error',
-            target: current.target,
-            bytes: null,
-            elapsedMs: null,
-            error: message,
-          }));
-        }
         updateStatus(message, 'error');
       });
     }
@@ -1006,31 +926,11 @@ export function App() {
     () => ({ compact: compactOutput, encrypted: encryptOutput }),
     [compactOutput, encryptOutput],
   );
-  const hexVariantNeeded =
-    hasActiveFile &&
-    editorSurface === 'hex' &&
-    binaryBytes !== null &&
-    binaryEncoding !== null &&
-    !sameRtonEncoding(binaryEncoding, targetBinaryEncoding);
-  const readyHexVariantBytes =
-    hexVariantNeeded && byteTransformState.bytes && sameNullableRtonEncoding(byteTransformState.target, targetBinaryEncoding)
-      ? byteTransformState.bytes
-      : null;
-  const displayedHexBytes = readyHexVariantBytes ?? binaryBytes;
-  const canGenerateHexVariant = hexVariantNeeded && wasmReady && binaryBytes !== null && binaryEncoding !== null;
-  const hexVariantPreviewSkipped =
-    hexVariantNeeded &&
-    byteTransformState.status === 'skipped' &&
-    sameNullableRtonEncoding(byteTransformState.target, targetBinaryEncoding);
+  const hexOutputMatchesSource = binaryEncoding !== null && sameRtonEncoding(binaryEncoding, targetBinaryEncoding);
+  const displayedHexBytes = binaryBytes;
   const outputText = hasActiveFile
     ? editorSurface === 'hex' && binaryBytes
-      ? `${formatBytes((displayedHexBytes ?? binaryBytes).byteLength)} · ${
-          hexVariantPreviewSkipped
-            ? t('app.rawBytes')
-            : hexVariantNeeded
-              ? formatRtonEncoding(targetBinaryEncoding, t)
-              : t('app.rawBytes')
-        }`
+      ? `${formatBytes(binaryBytes.byteLength)} · ${t('app.rawBytes')}`
       : lastOutputBytes
         ? `${formatBytes(lastOutputBytes)} · ${compactOutput ? 'compact' : 'standard'}${encryptOutput ? ' · encrypted' : ''}`
         : t('app.notGenerated')
@@ -1038,29 +938,9 @@ export function App() {
   const displaySurfaceNote =
     editorSurface === 'hex'
       ? binaryBytes
-        ? hexVariantPreviewSkipped
-          ? `RTON · ${formatBytes(binaryBytes.byteLength)}`
-          : hexVariantNeeded
-            ? `RTON · ${formatRtonEncoding(targetBinaryEncoding, t)}`
-            : `RTON · ${formatBytes(binaryBytes.byteLength)}`
+        ? `RTON · ${formatBytes(binaryBytes.byteLength)}`
         : t('app.rtonUnavailable')
       : surfaceNote;
-  const hexVariantMetaText = readyHexVariantBytes
-    ? `${formatRtonEncoding(byteTransformState.target ?? targetBinaryEncoding, t)} · ${formatBytes(readyHexVariantBytes.byteLength)}${
-        byteTransformState.elapsedMs === null ? '' : ` · ${formatDuration(byteTransformState.elapsedMs)}`
-      }`
-    : byteTransformState.error
-      ? t('panel.hexUnavailable', { message: byteTransformState.error })
-      : byteTransformState.status === 'running' && byteTransformState.target
-        ? t('panel.hexGenerating', { encoding: formatRtonEncoding(byteTransformState.target, t) })
-        : byteTransformState.status === 'skipped' && byteTransformState.target
-          ? t('panel.hexPreviewSkipped', {
-              encoding: formatRtonEncoding(byteTransformState.target, t),
-              limit: formatBytes(HEX_VARIANT_PREVIEW_LIMIT_BYTES),
-            })
-          : canGenerateHexVariant
-            ? t('panel.hexNotGenerated')
-            : t('panel.hexOnlyRton');
 
 	  const validateValue = useCallback(() => {
     if (activeTabId === null) {
@@ -1074,12 +954,11 @@ export function App() {
     }
 
     try {
-	      if (editorSurface === 'hex' && binaryBytes) {
-	        const outputBytes = hexVariantNeeded ? byteTransformState.bytes : binaryBytes;
-	        setLastOutputBytes(outputBytes?.byteLength ?? null);
-	        updateStatus(t('format.exportable', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
-	        return;
-	      }
+      if (editorSurface === 'hex' && binaryBytes) {
+        setLastOutputBytes(hexOutputMatchesSource ? binaryBytes.byteLength : null);
+        updateStatus(t('format.exportable', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
+        return;
+      }
 
       const value = currentValueRef.current;
       if (!value) {
@@ -1093,10 +972,9 @@ export function App() {
 	  }, [
 	    activeTabId,
 	    binaryBytes,
-	    byteTransformState.bytes,
-	    editorSurface,
-	    hexVariantNeeded,
-	    parseError,
+		    editorSurface,
+		    hexOutputMatchesSource,
+		    parseError,
 	    t,
 	    targetBinaryEncoding,
 	    updateStatus,
@@ -1248,68 +1126,6 @@ export function App() {
     '--rton-right-panel-width': `${rightPanelWidth}px`,
   } as CSSProperties;
 
-  useEffect(() => {
-    if (!canGenerateHexVariant || !binaryBytes || !binaryEncoding) {
-      terminateByteTransformWorker();
-      resetByteTransformState();
-      return;
-    }
-
-    terminateByteTransformWorker();
-    const target = targetBinaryEncoding;
-    if (binaryBytes.byteLength > HEX_VARIANT_PREVIEW_LIMIT_BYTES) {
-      setByteTransformState({
-        status: 'skipped',
-        target,
-        bytes: null,
-        elapsedMs: null,
-        error: null,
-      });
-      updateStatus(
-        t('status.hexPreviewSkipped', {
-          size: formatBytes(binaryBytes.byteLength),
-          limit: formatBytes(HEX_VARIANT_PREVIEW_LIMIT_BYTES),
-        }),
-        'warn',
-      );
-      return;
-    }
-
-    const requestId = byteTransformRequestId.current + 1;
-    byteTransformRequestId.current = requestId;
-    byteTransformPreviewRequestId.current = requestId;
-    setByteTransformState({
-      status: 'running',
-      target,
-      bytes: null,
-      elapsedMs: null,
-      error: null,
-    });
-    updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(target, t) }), 'warn');
-
-    const sourceBytesForWorker = new Uint8Array(binaryBytes);
-    getByteTransformWorker().postMessage(
-      {
-        id: requestId,
-        kind: 'bytes',
-        source: binaryEncoding,
-        target,
-        bytes: sourceBytesForWorker,
-      },
-      [sourceBytesForWorker.buffer],
-    );
-  }, [
-    binaryBytes,
-    binaryEncoding,
-    canGenerateHexVariant,
-    getByteTransformWorker,
-    resetByteTransformState,
-    targetBinaryEncoding,
-    terminateByteTransformWorker,
-    t,
-    updateStatus,
-  ]);
-
   useEffect(() => terminateByteTransformWorker, [terminateByteTransformWorker]);
 
   const resizePanel = useCallback((side: PanelSide, width: number) => {
@@ -1449,18 +1265,6 @@ export function App() {
       }
     },
 	    [activeTabId, clearPendingWork, invalidateFormatWork, renderTextForValue, setCurrentValueState, t, updateStatus],
-	  );
-
-	  const onDisplayedHexBytesChange = useCallback(
-	    (nextBytes: Uint8Array) => {
-	      if (!hexVariantNeeded) {
-	        onHexBytesChange(nextBytes);
-	        return;
-	      }
-	
-	      updateStatus(t('status.readonlyHexPreview'), 'warn');
-	    },
-	    [hexVariantNeeded, onHexBytesChange, t, updateStatus],
 	  );
 
   const loadSample = () => {
@@ -1660,25 +1464,19 @@ export function App() {
     }
 
 		    try {
-		      if (binaryBytes && binaryEncoding) {
-		        const readyVariant =
-		          byteTransformState.bytes && sameNullableRtonEncoding(byteTransformState.target, targetBinaryEncoding)
-		            ? byteTransformState.bytes
-		            : null;
-		        let outputBytes: Uint8Array;
-		        if (sameRtonEncoding(binaryEncoding, targetBinaryEncoding)) {
-		          outputBytes = binaryBytes;
-		        } else if (readyVariant) {
-		          outputBytes = readyVariant;
-		        } else {
-		          updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(targetBinaryEncoding, t) }), 'warn');
-		          outputBytes = await runByteTransformInWorker({
-		            kind: 'bytes',
-		            source: binaryEncoding,
-		            target: targetBinaryEncoding,
-		            bytes: new Uint8Array(binaryBytes),
-		          });
-		        }
+	      if (binaryBytes && binaryEncoding) {
+	        let outputBytes: Uint8Array;
+	        if (sameRtonEncoding(binaryEncoding, targetBinaryEncoding)) {
+	          outputBytes = binaryBytes;
+	        } else {
+	          updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(targetBinaryEncoding, t) }), 'warn');
+	          outputBytes = await runByteTransformInWorker({
+	            kind: 'bytes',
+	            source: binaryEncoding,
+	            target: targetBinaryEncoding,
+	            bytes: new Uint8Array(binaryBytes),
+	          });
+	        }
 		        setLastOutputBytes(outputBytes.byteLength);
 		        downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
 	        updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
@@ -2228,9 +2026,8 @@ export function App() {
 	            <HexEditor
 	              bytes={displayedHexBytes}
 	              jumpTarget={hexJumpTarget}
-	              readOnly={hexVariantNeeded}
 	              searchPanelVisible={editorSearchPanelVisible}
-              onChange={onDisplayedHexBytesChange}
+              onChange={onHexBytesChange}
               onSearchPanelVisibleChange={setEditorSearchPanelVisible}
             />
           ) : hasActiveFile ? (
@@ -2264,7 +2061,6 @@ export function App() {
                 <MetaItem label={t('panel.name')} value={displayFileName} />
                 <MetaItem label={t('panel.input')} value={hasActiveFile ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : t('app.textInput')) : t('app.noOutput')} />
                 <MetaItem label={t('panel.output')} value={outputText} />
-                {hexVariantNeeded && <MetaItem label="Hex" value={hexVariantMetaText} />}
               </dl>
             </section>
 
@@ -4855,10 +4651,6 @@ function sameRtonEncoding(left: RtonBinaryEncoding, right: RtonBinaryEncoding) {
   return left.compact === right.compact && left.encrypted === right.encrypted;
 }
 
-function sameNullableRtonEncoding(left: RtonBinaryEncoding | null, right: RtonBinaryEncoding) {
-  return left !== null && sameRtonEncoding(left, right);
-}
-
 function formatRtonEncoding(encoding: RtonBinaryEncoding, t?: Translator) {
   const encryptedLabel = t ? t('toolbar.encrypted') : translate('toolbar.encrypted');
   return `${encoding.compact ? 'Compact' : 'Standard'}${encoding.encrypted ? ` · ${encryptedLabel}` : ''}`;
@@ -5259,13 +5051,6 @@ function formatBytes(bytes: number) {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-}
-
-function formatDuration(milliseconds: number) {
-  if (milliseconds < 1000) {
-    return `${Math.round(milliseconds)} ms`;
-  }
-  return `${(milliseconds / 1000).toFixed(1)} s`;
 }
 
 function errorMessage(error: unknown) {
