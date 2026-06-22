@@ -65,7 +65,7 @@ import {
   outputBaseName,
   timestampForFileName,
 } from './file-export';
-import { createBatchExportArchive, type BatchExportMode, type BatchStructuredFormatter } from './batch-export';
+import { createBatchExportArchive, encodeBatchExportValue, type BatchExportMode } from './batch-export';
 import {
   decodeLoadableSource,
   decodeRtonSourceValue,
@@ -1473,7 +1473,7 @@ export function App() {
             tabsById,
           }),
         encodeValue: (value) =>
-          convertRtonValueForBatch(value, mode, {
+          encodeBatchExportValue(value, mode, {
             compact: compactOutput,
             encrypted: encryptOutput,
             structuredFormatter,
@@ -2105,30 +2105,6 @@ async function resolveBatchItemValue(
   }
 
   throw new Error(translate('status.noExportValue'));
-}
-
-function convertRtonValueForBatch(
-  value: RtonValue,
-  mode: BatchExportMode,
-  options: {
-    compact: boolean;
-    encrypted: boolean;
-    structuredFormatter: BatchStructuredFormatter | null;
-  },
-) {
-  if (mode === 'rton') {
-    return encodeRtonOutputBytes(value, options.compact, options.encrypted);
-  }
-
-  const encoder = new TextEncoder();
-  if (mode === 'json') {
-    return encoder.encode(rtonValueToJsonText(value, true));
-  }
-
-  if (!options.structuredFormatter) {
-    throw new Error(`${mode.toUpperCase()} formatter is unavailable`);
-  }
-  return encoder.encode(options.structuredFormatter(value, mode));
 }
 
 function errorMessage(error: unknown) {

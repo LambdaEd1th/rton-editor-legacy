@@ -6,6 +6,7 @@ import {
   yieldToBrowser,
   type ZipFileEntry,
 } from './file-export';
+import { encodeRtonOutputBytes, rtonValueToJsonText } from './rton-codec';
 import type { RtonValue } from './rton-value';
 
 export type BatchExportMode = 'rton' | 'json' | 'yaml' | 'toml';
@@ -15,6 +16,12 @@ export type BatchExportItem = {
 };
 
 export type BatchStructuredFormatter = (value: RtonValue, mode: StructuredFormatMode) => string;
+
+export type BatchExportEncodeOptions = {
+  compact: boolean;
+  encrypted: boolean;
+  structuredFormatter: BatchStructuredFormatter | null;
+};
 
 export type BatchExportArchiveResult = {
   exportedCount: number;
@@ -61,4 +68,24 @@ export async function createBatchExportArchive<TItem extends BatchExportItem>({
     errors,
     zipBytes: zipEntries.length === 0 ? null : createZipArchive(zipEntries),
   };
+}
+
+export function encodeBatchExportValue(
+  value: RtonValue,
+  mode: BatchExportMode,
+  options: BatchExportEncodeOptions,
+) {
+  if (mode === 'rton') {
+    return encodeRtonOutputBytes(value, options.compact, options.encrypted);
+  }
+
+  const encoder = new TextEncoder();
+  if (mode === 'json') {
+    return encoder.encode(rtonValueToJsonText(value, true));
+  }
+
+  if (!options.structuredFormatter) {
+    throw new Error(`${mode.toUpperCase()} formatter is unavailable`);
+  }
+  return encoder.encode(options.structuredFormatter(value, mode));
 }
