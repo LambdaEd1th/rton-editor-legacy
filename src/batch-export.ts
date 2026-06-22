@@ -1,3 +1,4 @@
+import type { EditorTab } from './editor-tabs';
 import type { StructuredFormatMode } from './format-conversion';
 import {
   batchOutputPath,
@@ -6,13 +7,20 @@ import {
   yieldToBrowser,
   type ZipFileEntry,
 } from './file-export';
-import { encodeRtonOutputBytes, rtonValueToJsonText } from './rton-codec';
+import type { LoadedRtonFile } from './loaded-file-items';
+import { t as translate } from './localization/i18n';
+import { decodeLoadableSource, encodeRtonOutputBytes, rtonValueToJsonText } from './rton-codec';
 import type { RtonValue } from './rton-value';
 
 export type BatchExportMode = 'rton' | 'json' | 'yaml' | 'toml';
 
 export type BatchExportItem = {
   path: string;
+};
+
+export type BatchExportResolvableItem = BatchExportItem & {
+  fileId: number | null;
+  tabId: number | null;
 };
 
 export type BatchStructuredFormatter = (value: RtonValue, mode: StructuredFormatMode) => string;
@@ -27,6 +35,13 @@ export type BatchExportArchiveResult = {
   exportedCount: number;
   errors: string[];
   zipBytes: Uint8Array | null;
+};
+
+export type BatchExportResolveContext = {
+  activeTabId: number | null;
+  currentValue: RtonValue | null;
+  filesById: Map<number, LoadedRtonFile>;
+  tabsById: Map<number, EditorTab>;
 };
 
 export async function createBatchExportArchive<TItem extends BatchExportItem>({
@@ -88,4 +103,26 @@ export function encodeBatchExportValue(
     throw new Error(`${mode.toUpperCase()} formatter is unavailable`);
   }
   return encoder.encode(options.structuredFormatter(value, mode));
+}
+
+export async function resolveBatchExportItemValue(
+  item: BatchExportResolvableItem,
+  context: BatchExportResolveContext,
+) {
+  if (item.tabId !== null) {
+    const value = item.tabId === context.activeTabId ? context.currentValue : context.tabsById.get(item.tabId)?.currentValue;
+    if (value) {
+      return value;
+    }
+  }
+
+  if (item.fileId !== null) {
+    const entry = context.filesById.get(item.fileId);
+    if (!entry) {
+      throw new Error(translate('status.fileListItemStale'));
+    }
+    return (await decodeLoadableSource(entry)).value;
+  }
+
+  throw new Error(translate('status.noExportValue'));
 }

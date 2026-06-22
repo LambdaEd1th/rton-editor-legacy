@@ -27,11 +27,10 @@ import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
 import { DraggableToolbar, type ToolbarGroupConfig, type ToolbarGroupId } from './components/DraggableToolbar';
 import { EditorTabStrip, reorderTabs, type TabDropPlacement } from './components/EditorTabStrip';
 import { HexEditor, type HexEditorJumpTarget } from './components/HexEditor';
-import { LoadedFilesTree, type LoadedFileTreeItem } from './components/LoadedFilesTree';
+import { LoadedFilesTree } from './components/LoadedFilesTree';
 import { MetaItem, PanelHeader, PanelResizeHandle, Stat, type PanelSide } from './components/Panels';
 import type { StructuredFormatMode } from './format-conversion';
 import { useI18n } from './localization/use-i18n';
-import { t as translate } from './localization/i18n';
 import {
   type RtonValue,
 } from './rton-value';
@@ -65,7 +64,12 @@ import {
   outputBaseName,
   timestampForFileName,
 } from './file-export';
-import { createBatchExportArchive, encodeBatchExportValue, type BatchExportMode } from './batch-export';
+import {
+  createBatchExportArchive,
+  encodeBatchExportValue,
+  resolveBatchExportItemValue,
+  type BatchExportMode,
+} from './batch-export';
 import {
   decodeLoadableSource,
   decodeRtonSourceValue,
@@ -1466,7 +1470,7 @@ export function App() {
         items: selectedItems,
         mode,
         resolveValue: (item) =>
-          resolveBatchItemValue(item, {
+          resolveBatchExportItemValue(item, {
             activeTabId,
             currentValue: currentValueRef.current,
             filesById,
@@ -2078,33 +2082,6 @@ export function App() {
       </footer>
     </main>
   );
-}
-
-async function resolveBatchItemValue(
-  item: LoadedFileTreeItem,
-  context: {
-    activeTabId: number | null;
-    currentValue: RtonValue | null;
-    filesById: Map<number, LoadedRtonFile>;
-    tabsById: Map<number, EditorTab>;
-  },
-) {
-  if (item.tabId !== null) {
-    const value = item.tabId === context.activeTabId ? context.currentValue : context.tabsById.get(item.tabId)?.currentValue;
-    if (value) {
-      return value;
-    }
-  }
-
-  if (item.fileId !== null) {
-    const entry = context.filesById.get(item.fileId);
-    if (!entry) {
-      throw new Error(translate('status.fileListItemStale'));
-    }
-    return (await decodeLoadableSource(entry)).value;
-  }
-
-  throw new Error(translate('status.noExportValue'));
 }
 
 function errorMessage(error: unknown) {
