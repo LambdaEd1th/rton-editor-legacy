@@ -139,8 +139,10 @@ export function useRtonEditorController() {
   });
   const {
     getRtonDocumentChildren,
+    exportRtonDocumentText,
     locateRtonDocumentOffset,
     releaseRtonDocument,
+    replaceRtonDocumentBytes,
     runRtonDecodeInWorker,
     searchRtonDocument,
   } = useRtonDecodeWorker({
@@ -461,6 +463,7 @@ export function useRtonEditorController() {
     binaryEncoding,
     compactOutput,
     currentValueRef,
+    rtonDocument,
     editorSurface,
     encryptOutput,
     fileName,
@@ -475,6 +478,7 @@ export function useRtonEditorController() {
     updateStatus,
     viewModeRef,
     wasmReady,
+    exportRtonDocumentText,
     runByteTransformInWorker,
     runByteTransformSizeInWorker,
   });
@@ -550,6 +554,7 @@ export function useRtonEditorController() {
     clearPendingWork,
     compactOutput,
     currentValueRef,
+    rtonDocument,
     invalidateFormatWork,
     parseError,
     renderTextForValue,
@@ -560,6 +565,7 @@ export function useRtonEditorController() {
     setLastOutputBytes,
     setParseError,
     setParsedJson,
+    setRtonDocument,
     setSearchState,
     setSourceBytes,
     setStats,
@@ -567,6 +573,7 @@ export function useRtonEditorController() {
     t,
     updateStatus,
     viewModeRef,
+    replaceRtonDocumentBytes,
   });
 
   const loadSample = () => {

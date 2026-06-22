@@ -136,6 +136,7 @@ function RemoteRtonValueTree({
 }) {
   return (
     <RemoteRtonValueTreeNode
+      key={`${document.id}:${document.version}`}
       documentId={document.id}
       node={document.root}
       depth={0}

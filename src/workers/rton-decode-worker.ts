@@ -1,5 +1,5 @@
 import { collectStats, RTON_SEARCH_MATCH_LIMIT, type Stats } from '../domain/rton-value-analysis';
-import { decodeRtonValueWire, type RtonValue } from '../domain/rton-value';
+import { decodeRtonValueWire, encodeRtonValueWire, type RtonValue } from '../domain/rton-value';
 import {
   previewRtonValue,
   type RtonValuePath,
@@ -10,7 +10,11 @@ import type { RemoteRtonValueNode, RtonDocumentRef } from '../domain/rton-docume
 import init, {
   decode_rton_to_value,
   decrypt_rton_data,
+  value_to_json_text,
 } from '../wasm/rton-editor/rton_editor_wasm';
+
+type StructuredTextMode = 'yaml' | 'toml';
+type RtonDocumentTextMode = 'json' | StructuredTextMode;
 
 type RtonDecodeRequest =
   | {
@@ -40,6 +44,18 @@ type RtonDecodeRequest =
       id: number;
       documentId: number;
       path: RtonValuePath;
+    }
+  | {
+      action: 'exportText';
+      id: number;
+      documentId: number;
+      mode: RtonDocumentTextMode;
+    }
+  | {
+      action: 'replaceDocumentBytes';
+      id: number;
+      documentId: number;
+      bytes: Uint8Array;
     }
   | {
       action: 'release';
@@ -84,6 +100,23 @@ type RtonDecodeResponse =
       offset: number | null;
     }
   | {
+      action: 'exportText';
+      id: number;
+      ok: true;
+      bytes: Uint8Array;
+    }
+  | {
+      action: 'replaceDocumentBytes';
+      id: number;
+      ok: true;
+      document: RtonDocumentRef;
+      stats: Stats;
+      plainBytes: Uint8Array;
+      compact: boolean;
+      encrypted: boolean;
+      elapsedMs: number;
+    }
+  | {
       action: 'release';
       id: number;
       ok: true;
@@ -100,6 +133,7 @@ type StoredRtonDocument = {
   bytes: Uint8Array;
   stats: Stats;
   byteLength: number;
+  version: number;
 };
 
 let wasmReady: Promise<void> | null = null;
@@ -120,6 +154,10 @@ async function handleRequest(request: RtonDecodeRequest) {
       handleSearchRequest(request);
     } else if (request.action === 'locate') {
       handleLocateRequest(request);
+    } else if (request.action === 'exportText') {
+      await handleExportTextRequest(request);
+    } else if (request.action === 'replaceDocumentBytes') {
+      await handleReplaceDocumentBytesRequest(request);
     } else {
       handleReleaseRequest(request);
     }
@@ -136,12 +174,7 @@ async function handleRequest(request: RtonDecodeRequest) {
 async function handleDecodeRequest(request: Extract<RtonDecodeRequest, { action: 'decode' }>) {
   await ensureWasmReady();
   const startedAt = performance.now();
-  const encrypted = isEncryptedRtonBytes(request.bytes);
-  const plainBytes = encrypted ? decrypt_rton_data(request.bytes) : request.bytes;
-  const compact = isCompactRtonBytes(plainBytes);
-  const wire = decode_rton_to_value(plainBytes);
-  const value = decodeRtonValueWire(wire);
-  const stats = collectStats(value);
+  const { value, stats, plainBytes, compact, encrypted } = decodeBytesToDocumentData(request.bytes);
   const document = request.retainDocument ? storeDocument(value, plainBytes, stats) : undefined;
   const outgoingBytes = request.retainDocument ? new Uint8Array(plainBytes) : plainBytes;
   const response: RtonDecodeResponse = {
@@ -195,6 +228,52 @@ function handleLocateRequest(request: Extract<RtonDecodeRequest, { action: 'loca
   });
 }
 
+async function handleExportTextRequest(request: Extract<RtonDecodeRequest, { action: 'exportText' }>) {
+  const document = requireDocument(request.documentId);
+  const text = await formatDocumentText(document.value, request.mode);
+  const bytes = new TextEncoder().encode(text);
+  postWorkerMessage({
+    action: 'exportText',
+    id: request.id,
+    ok: true,
+    bytes,
+  }, [bytes.buffer as ArrayBuffer]);
+}
+
+async function handleReplaceDocumentBytesRequest(request: Extract<RtonDecodeRequest, { action: 'replaceDocumentBytes' }>) {
+  await ensureWasmReady();
+  const startedAt = performance.now();
+  const { value, stats, plainBytes, compact, encrypted } = decodeBytesToDocumentData(request.bytes);
+  const storedBytes = new Uint8Array(plainBytes);
+  documents.set(request.documentId, {
+    value,
+    bytes: storedBytes,
+    stats,
+    byteLength: storedBytes.byteLength,
+    version: (documents.get(request.documentId)?.version ?? 0) + 1,
+  });
+  const version = documents.get(request.documentId)?.version ?? 1;
+  const document: RtonDocumentRef = {
+    id: request.documentId,
+    version,
+    root: summarizeNode('$', value, []),
+    stats,
+    byteLength: storedBytes.byteLength,
+  };
+  const outgoingBytes = new Uint8Array(plainBytes);
+  postWorkerMessage({
+    action: 'replaceDocumentBytes',
+    id: request.id,
+    ok: true,
+    document,
+    stats,
+    plainBytes: outgoingBytes,
+    compact,
+    encrypted,
+    elapsedMs: performance.now() - startedAt,
+  }, [outgoingBytes.buffer as ArrayBuffer]);
+}
+
 function handleReleaseRequest(request: Extract<RtonDecodeRequest, { action: 'release' }>) {
   documents.delete(request.documentId);
   postWorkerMessage({
@@ -220,13 +299,34 @@ function storeDocument(value: RtonValue, bytes: Uint8Array, stats: Stats): RtonD
     bytes: storedBytes,
     stats,
     byteLength: storedBytes.byteLength,
+    version: 1,
   });
   return {
     id,
+    version: 1,
     root: summarizeNode('$', value, []),
     stats,
     byteLength: storedBytes.byteLength,
   };
+}
+
+function decodeBytesToDocumentData(bytes: Uint8Array) {
+  const encrypted = isEncryptedRtonBytes(bytes);
+  const plainBytes = encrypted ? decrypt_rton_data(bytes) : bytes;
+  const compact = isCompactRtonBytes(plainBytes);
+  const wire = decode_rton_to_value(plainBytes);
+  const value = decodeRtonValueWire(wire);
+  const stats = collectStats(value);
+  return { value, stats, plainBytes, compact, encrypted };
+}
+
+async function formatDocumentText(value: RtonValue, mode: RtonDocumentTextMode) {
+  if (mode === 'json') {
+    return value_to_json_text(encodeRtonValueWire(value), true);
+  }
+
+  const { formatStructuredText } = await import('../domain/format-conversion');
+  return formatStructuredText(value, mode);
 }
 
 function requireDocument(id: number) {

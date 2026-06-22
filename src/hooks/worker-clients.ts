@@ -6,6 +6,8 @@ import type { RtonBinaryEncoding, ViewMode } from '../domain/rton-codec';
 import type { RemoteRtonValueNode, RtonDocumentRef } from '../domain/rton-document';
 import type { RtonValuePath, SearchMatch } from '../domain/rton-value-editing';
 
+export type RtonDocumentTextMode = 'json' | 'yaml' | 'toml';
+
 export type FormatWorkerAction = 'format' | 'parse';
 
 export type FormatWorkerResponse =
@@ -120,6 +122,14 @@ export type RtonDocumentSearchOutput = {
   capped: boolean;
 };
 
+export type RtonDocumentByteUpdateOutput = {
+  document: RtonDocumentRef;
+  stats: Stats;
+  plainBytes: Uint8Array;
+  compact: boolean;
+  encrypted: boolean;
+};
+
 type RtonDecodeWorkerRequest =
   | {
       action: 'decode';
@@ -148,6 +158,18 @@ type RtonDecodeWorkerRequest =
       id: number;
       documentId: number;
       path: RtonValuePath;
+    }
+  | {
+      action: 'exportText';
+      id: number;
+      documentId: number;
+      mode: RtonDocumentTextMode;
+    }
+  | {
+      action: 'replaceDocumentBytes';
+      id: number;
+      documentId: number;
+      bytes: Uint8Array;
     }
   | {
       action: 'release';
@@ -192,6 +214,23 @@ type RtonDecodeWorkerResponse =
       offset: number | null;
     }
   | {
+      action: 'exportText';
+      id: number;
+      ok: true;
+      bytes: Uint8Array;
+    }
+  | {
+      action: 'replaceDocumentBytes';
+      id: number;
+      ok: true;
+      document: RtonDocumentRef;
+      stats: Stats;
+      plainBytes: Uint8Array;
+      compact: boolean;
+      encrypted: boolean;
+      elapsedMs: number;
+    }
+  | {
       action: 'release';
       id: number;
       ok: true;
@@ -204,7 +243,16 @@ type RtonDecodeWorkerResponse =
     };
 
 type PendingRtonDecode = {
-  resolve: (output: RtonDecodeWorkerOutput | RtonDocumentChildrenOutput | RtonDocumentSearchOutput | number | null) => void;
+  resolve: (
+    output:
+      | RtonDecodeWorkerOutput
+      | RtonDocumentChildrenOutput
+      | RtonDocumentSearchOutput
+      | RtonDocumentByteUpdateOutput
+      | Uint8Array
+      | number
+      | null
+  ) => void;
   reject: (error: Error) => void;
 };
 
@@ -514,6 +562,16 @@ export function useRtonDecodeWorker({
             });
           } else if (response.action === 'locate') {
             pending.resolve(response.offset);
+          } else if (response.action === 'exportText') {
+            pending.resolve(response.bytes);
+          } else if (response.action === 'replaceDocumentBytes') {
+            pending.resolve({
+              document: response.document,
+              stats: response.stats,
+              plainBytes: response.plainBytes,
+              compact: response.compact,
+              encrypted: response.encrypted,
+            });
           } else {
             pending.resolve(null);
           }
@@ -618,6 +676,32 @@ export function useRtonDecodeWorker({
     [nextRtonDecodeRequestId, runRtonWorkerRequest],
   );
 
+  const exportRtonDocumentText = useCallback(
+    (documentId: number, mode: RtonDocumentTextMode) => {
+      const request = {
+        action: 'exportText',
+        id: nextRtonDecodeRequestId(),
+        documentId,
+        mode,
+      } satisfies RtonDecodeWorkerRequest;
+      return runRtonWorkerRequest<Uint8Array>(request);
+    },
+    [nextRtonDecodeRequestId, runRtonWorkerRequest],
+  );
+
+  const replaceRtonDocumentBytes = useCallback(
+    (documentId: number, bytes: Uint8Array) => {
+      const request = {
+        action: 'replaceDocumentBytes',
+        id: nextRtonDecodeRequestId(),
+        documentId,
+        bytes,
+      } satisfies RtonDecodeWorkerRequest;
+      return runRtonWorkerRequest<RtonDocumentByteUpdateOutput>(request, [bytes.buffer as ArrayBuffer]);
+    },
+    [nextRtonDecodeRequestId, runRtonWorkerRequest],
+  );
+
   const releaseRtonDocument = useCallback(
     (documentId: number) => {
       const request = {
@@ -633,9 +717,11 @@ export function useRtonDecodeWorker({
   useEffect(() => terminateRtonDecodeWorker, [terminateRtonDecodeWorker]);
 
   return {
+    exportRtonDocumentText,
     getRtonDocumentChildren,
     locateRtonDocumentOffset,
     releaseRtonDocument,
+    replaceRtonDocumentBytes,
     runRtonDecodeInWorker,
     searchRtonDocument,
     terminateRtonDecodeWorker,

@@ -17,6 +17,7 @@ import {
 } from '../files/file-export';
 import type { LoadedRtonFile } from '../files/loaded-file-items';
 import type { Translator } from '../localization/i18n';
+import type { RtonDocumentRef } from '../domain/rton-document';
 import {
   formatRtonEncoding,
   rtonValueToJsonText,
@@ -27,7 +28,7 @@ import {
   type ViewMode,
 } from '../domain/rton-codec';
 import type { RtonValue } from '../domain/rton-value';
-import type { ByteTransformWorkerPayload } from './worker-clients';
+import type { ByteTransformWorkerPayload, RtonDocumentTextMode } from './worker-clients';
 
 type ExportListItem = BatchExportResolvableItem & {
   key: string;
@@ -39,6 +40,7 @@ export function useExportActions({
   binaryEncoding,
   compactOutput,
   currentValueRef,
+  rtonDocument,
   editorSurface,
   encryptOutput,
   fileName,
@@ -55,12 +57,14 @@ export function useExportActions({
   wasmReady,
   runByteTransformInWorker,
   runByteTransformSizeInWorker,
+  exportRtonDocumentText,
 }: {
   activeTabId: number | null;
   binaryBytes: Uint8Array | null;
   binaryEncoding: RtonBinaryEncoding | null;
   compactOutput: boolean;
   currentValueRef: { current: RtonValue | null };
+  rtonDocument: RtonDocumentRef | null;
   editorSurface: EditorSurface;
   encryptOutput: boolean;
   fileName: string;
@@ -77,6 +81,7 @@ export function useExportActions({
   wasmReady: boolean;
   runByteTransformInWorker: (payload: ByteTransformWorkerPayload) => Promise<Uint8Array>;
   runByteTransformSizeInWorker: (payload: ByteTransformWorkerPayload) => Promise<number>;
+  exportRtonDocumentText: (documentId: number, mode: RtonDocumentTextMode) => Promise<Uint8Array>;
 }) {
   const outputSizeRequestId = useRef(0);
 
@@ -260,7 +265,7 @@ export function useExportActions({
     wasmReady,
   ]);
 
-  const downloadJson = useCallback(() => {
+  const downloadJson = useCallback(async () => {
     if (activeTabId === null) {
       updateStatus(t('status.openFileFirst'), 'warn');
       return;
@@ -268,6 +273,13 @@ export function useExportActions({
 
     try {
       const value = currentValueRef.current;
+      if (!value && rtonDocument) {
+        updateStatus(t('status.generatingTextExport', { label: 'JSON' }), 'warn');
+        const bytes = await exportRtonDocumentText(rtonDocument.id, 'json');
+        downloadBytes(bytes, outputBaseName(fileName, 'json'));
+        updateStatus(t('format.generated', { label: 'JSON' }), 'ok');
+        return;
+      }
       if (!value) {
         throw new Error(parseError ?? t('status.noSearchableValue'));
       }
@@ -276,7 +288,7 @@ export function useExportActions({
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
-  }, [activeTabId, currentValueRef, fileName, parseError, t, updateStatus]);
+  }, [activeTabId, currentValueRef, exportRtonDocumentText, fileName, parseError, rtonDocument, t, updateStatus]);
 
   const downloadStructuredFormat = useCallback(
     async (mode: StructuredFormatMode) => {
@@ -287,6 +299,14 @@ export function useExportActions({
 
       try {
         const value = currentValueRef.current;
+        if (!value && rtonDocument) {
+          const label = mode.toUpperCase();
+          updateStatus(t('status.generatingTextExport', { label }), 'warn');
+          const bytes = await exportRtonDocumentText(rtonDocument.id, mode);
+          downloadBytes(bytes, outputBaseName(fileName, mode));
+          updateStatus(t('format.generated', { label }), 'ok');
+          return;
+        }
         if (!value) {
           throw new Error(parseError ?? t('status.noSearchableValue'));
         }
@@ -298,7 +318,7 @@ export function useExportActions({
         updateStatus(errorMessage(error), 'error');
       }
     },
-    [activeTabId, currentValueRef, fileName, parseError, t, updateStatus],
+    [activeTabId, currentValueRef, exportRtonDocumentText, fileName, parseError, rtonDocument, t, updateStatus],
   );
 
   const batchExportSelectedFiles = useCallback(

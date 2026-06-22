@@ -15,6 +15,7 @@ export type RemoteRtonValueNode = {
 
 export type RtonDocumentRef = {
   id: number;
+  version: number;
   root: RemoteRtonValueNode;
   stats: Stats;
   byteLength: number;
