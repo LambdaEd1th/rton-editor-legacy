@@ -8,7 +8,6 @@ import {
 } from 'react';
 import {
   Activity,
-  CheckCheck,
   CheckCircle2,
   Download,
   FileArchive,
@@ -19,7 +18,6 @@ import {
   ListTree,
   Redo2,
   Search,
-  Square,
   Undo2,
 } from 'lucide-react';
 import init from './wasm/rton-editor/rton_editor_wasm';
@@ -27,7 +25,8 @@ import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
 import { DraggableToolbar, type ToolbarGroupConfig, type ToolbarGroupId } from './components/DraggableToolbar';
 import { EditorTabStrip, type TabDropPlacement } from './components/EditorTabStrip';
 import { HexEditor, type HexEditorJumpTarget } from './components/HexEditor';
-import { LoadedFilesTree } from './components/LoadedFilesTree';
+import { AppStatusBar } from './components/AppStatusBar';
+import { FileListPanel } from './components/FileListPanel';
 import { MetaItem, PanelHeader, PanelResizeHandle, Stat, type PanelSide } from './components/Panels';
 import type { StructuredFormatMode } from './format-conversion';
 import { useI18n } from './localization/use-i18n';
@@ -1676,82 +1675,29 @@ export function App() {
         />
 
         <section className="rton-main-content">
-          <aside className="rton-side-panel rton-side-panel-left">
-          <PanelHeader
-            icon={<FileArchive />}
-            title={t('fileList.title')}
-            subtitle={fileListSubtitle}
-            actions={
-              <>
-                <button type="button" onClick={selectAllListedFiles} disabled={visibleFileCount === 0} className={buttonClass('secondary')}>
-                  <CheckCheck />
-                  {t('fileList.selectAll')}
-                </button>
-                <button type="button" onClick={clearSelectedFiles} disabled={selectedVisibleFileCount === 0} className={buttonClass('secondary')}>
-                  <Square />
-                  {t('fileList.selectNone')}
-                </button>
-              </>
-            }
-            below={
-              <div className="grid grid-cols-4 gap-1.5">
-                {(['rton', 'json', 'yaml', 'toml'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    disabled={selectedFileCount === 0 || !wasmReady}
-                    className={buttonClass(mode === 'rton' ? 'primary' : 'secondary')}
-                    onClick={() => void batchExportSelectedFiles(mode)}
-                  >
-                    {mode.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            }
+          <FileListPanel
+            t={t}
+            fileListSubtitle={fileListSubtitle}
+            fileSearchActive={fileSearchActive}
+            fileSearchQuery={fileSearchQuery}
+            filteredLoadedFileItems={filteredLoadedFileItems}
+            listedFileCount={listedFileCount}
+            selectedFileCount={selectedFileCount}
+            selectedFileKeys={selectedFileKeys}
+            selectedVisibleFileCount={selectedVisibleFileCount}
+            visibleFileCount={visibleFileCount}
+            wasmReady={wasmReady}
+            onActivate={activateEditorTab}
+            onBatchExport={(mode) => void batchExportSelectedFiles(mode)}
+            onClearSearch={() => setFileSearchQuery('')}
+            onClearSelectedFiles={clearSelectedFiles}
+            onClose={closeEditorTab}
+            onOpenFile={openLoadedFile}
+            onSearchChange={setFileSearchQuery}
+            onSelectAllListedFiles={selectAllListedFiles}
+            onToggleSelected={toggleSelectedFile}
+            onToggleSelectedMany={toggleSelectedFiles}
           />
-          <section className="border-b border-[var(--color-border)] p-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2 top-1.5 h-4 w-4 text-[var(--color-text-subtle)]" />
-              <input
-                type="search"
-                value={fileSearchQuery}
-                placeholder={t('fileList.searchPlaceholder')}
-                disabled={listedFileCount === 0}
-                className="h-7 w-full rounded border border-[var(--color-border-strong)] bg-[var(--color-control)] py-0 pl-7 pr-7 text-sm text-[var(--color-text-strong)] placeholder:text-[var(--color-placeholder)] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
-                onChange={(event) => setFileSearchQuery(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    setFileSearchQuery('');
-                  }
-                }}
-              />
-              {fileSearchQuery && (
-                <button
-                  type="button"
-                  aria-label={t('fileList.clearSearch')}
-                  className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded border-0 bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-strong)] focus-visible:outline-none"
-                  onClick={() => setFileSearchQuery('')}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </section>
-
-          <section className="min-h-0 overflow-auto p-2">
-            <LoadedFilesTree
-              items={filteredLoadedFileItems}
-              selectedKeys={selectedFileKeys}
-              emptyMessage={fileSearchActive ? t('fileList.noMatches') : t('app.emptyFile')}
-              forceOpenFolders={fileSearchActive}
-              onOpenFile={openLoadedFile}
-              onActivate={activateEditorTab}
-              onClose={closeEditorTab}
-              onToggleSelected={toggleSelectedFile}
-              onToggleSelectedMany={toggleSelectedFiles}
-            />
-          </section>
-        </aside>
 
         <PanelResizeHandle side="left" width={leftPanelWidth} onResize={resizePanel} />
 
@@ -1865,21 +1811,12 @@ export function App() {
         </section>
       </div>
 
-      <footer className="flex min-h-[30px] shrink-0 items-center gap-[14px] overflow-hidden border-t border-[var(--color-border)] bg-[var(--color-status)] px-2.5 py-[5px] text-xs text-[var(--color-status-text)]">
-        <span className={cx('min-w-0 flex-1 truncate', status.tone === 'error' && 'text-[var(--color-error)]', status.tone === 'ok' && 'text-[var(--color-accent-text)]')}>
-          {status.message}
-        </span>
-        <span className="hidden shrink-0 tabular-nums text-[var(--color-text-muted)] sm:inline">{displayFileName}</span>
-        <span className="hidden shrink-0 tabular-nums text-[var(--color-text-muted)] sm:inline">{t('app.output')} {outputText}</span>
-        <a
-          href="https://space.bilibili.com/8217621"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 text-[var(--color-status-link)] no-underline hover:text-[var(--color-accent-text)] hover:underline"
-        >
-          by LambdaEd1th
-        </a>
-      </footer>
+      <AppStatusBar
+        displayFileName={displayFileName}
+        outputLabel={t('app.output')}
+        outputText={outputText}
+        status={status}
+      />
     </main>
   );
 }
