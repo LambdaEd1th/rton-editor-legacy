@@ -1,6 +1,7 @@
 import {
   formatRtonEncoding,
   isPendingTextPreview,
+  sameRtonEncoding,
   type EditorSurface,
   type RtonBinaryEncoding,
   type ViewMode,
@@ -55,13 +56,16 @@ function buildRtonOutputText({
   targetBinaryEncoding: RtonBinaryEncoding;
   t: Translator;
 }) {
-  if (binaryBytes) {
-    const encoding = binaryEncoding ?? targetBinaryEncoding;
-    return `${formatBytes(binaryBytes.byteLength)} · ${formatRtonEncoding(encoding, t)} RTON`;
+  if (binaryBytes && binaryEncoding && sameRtonEncoding(binaryEncoding, targetBinaryEncoding)) {
+    return `${formatBytes(binaryBytes.byteLength)} · ${formatRtonEncoding(binaryEncoding, t)} RTON`;
   }
 
   if (lastOutputBytes !== null) {
     return `${formatBytes(lastOutputBytes)} · ${formatRtonEncoding(targetBinaryEncoding, t)} RTON`;
+  }
+
+  if (binaryBytes && !binaryEncoding) {
+    return `${formatBytes(binaryBytes.byteLength)} · ${t('app.rawBytes')}`;
   }
 
   return t('app.notGenerated');

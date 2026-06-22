@@ -55,13 +55,22 @@ export type ByteTransformWorkerPayload =
       kind: 'value';
       target: RtonBinaryEncoding;
       value: RtonValue;
+      result?: ByteTransformResultKind;
     }
   | {
       kind: 'bytes';
       source: RtonBinaryEncoding;
       target: RtonBinaryEncoding;
       bytes: Uint8Array;
+      result?: ByteTransformResultKind;
     };
+
+type ByteTransformResultKind = 'bytes' | 'size';
+
+type ByteTransformWorkerOutput = {
+  byteLength: number;
+  bytes: Uint8Array | null;
+};
 
 type ByteTransformWorkerRequest =
   | ({
@@ -72,7 +81,8 @@ type ByteTransformWorkerResponse =
   | {
       id: number;
       ok: true;
-      bytes: Uint8Array;
+      byteLength: number;
+      bytes?: Uint8Array;
     }
   | {
       id: number;
@@ -81,7 +91,7 @@ type ByteTransformWorkerResponse =
     };
 
 type PendingByteTransform = {
-  resolve: (bytes: Uint8Array) => void;
+  resolve: (output: ByteTransformWorkerOutput) => void;
   reject: (error: Error) => void;
 };
 
@@ -257,7 +267,7 @@ export function useByteTransformWorker({
         if (pending) {
           byteTransformPromises.current.delete(response.id);
           if (response.ok) {
-            pending.resolve(response.bytes);
+            pending.resolve({ byteLength: response.byteLength, bytes: response.bytes ?? null });
           } else {
             pending.reject(new Error(response.error));
           }
@@ -278,14 +288,14 @@ export function useByteTransformWorker({
     return byteTransformWorker.current;
   }, [rejectPendingByteTransforms, t]);
 
-  const runByteTransformInWorker = useCallback(
+  const runByteTransformRequestInWorker = useCallback(
     (payload: ByteTransformWorkerPayload) => {
       terminateByteTransformWorker();
       const requestId = byteTransformRequestId.current + 1;
       byteTransformRequestId.current = requestId;
       const request = { id: requestId, ...payload } satisfies ByteTransformWorkerRequest;
       const transfer: Transferable[] | null = payload.kind === 'bytes' ? [payload.bytes.buffer as ArrayBuffer] : null;
-      return new Promise<Uint8Array>((resolve, reject) => {
+      return new Promise<ByteTransformWorkerOutput>((resolve, reject) => {
         byteTransformPromises.current.set(requestId, { resolve, reject });
         const worker = getByteTransformWorker();
         if (transfer) {
@@ -298,10 +308,30 @@ export function useByteTransformWorker({
     [getByteTransformWorker, terminateByteTransformWorker],
   );
 
+  const runByteTransformInWorker = useCallback(
+    async (payload: ByteTransformWorkerPayload) => {
+      const output = await runByteTransformRequestInWorker({ ...payload, result: 'bytes' });
+      if (!output.bytes) {
+        throw new Error(t('status.hexWorkerUnreadable'));
+      }
+      return output.bytes;
+    },
+    [runByteTransformRequestInWorker, t],
+  );
+
+  const runByteTransformSizeInWorker = useCallback(
+    async (payload: ByteTransformWorkerPayload) => {
+      const output = await runByteTransformRequestInWorker({ ...payload, result: 'size' });
+      return output.byteLength;
+    },
+    [runByteTransformRequestInWorker],
+  );
+
   useEffect(() => terminateByteTransformWorker, [terminateByteTransformWorker]);
 
   return {
     runByteTransformInWorker,
+    runByteTransformSizeInWorker,
     terminateByteTransformWorker,
   };
 }

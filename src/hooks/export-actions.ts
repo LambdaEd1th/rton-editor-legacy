@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   createBatchExportArchive,
   encodeBatchExportValue,
@@ -11,6 +11,7 @@ import type { StructuredFormatMode } from '../domain/format-conversion';
 import {
   downloadBlob,
   downloadBytes,
+  formatBytes,
   outputBaseName,
   timestampForFileName,
 } from '../files/file-export';
@@ -53,6 +54,7 @@ export function useExportActions({
   viewModeRef,
   wasmReady,
   runByteTransformInWorker,
+  runByteTransformSizeInWorker,
 }: {
   activeTabId: number | null;
   binaryBytes: Uint8Array | null;
@@ -74,7 +76,10 @@ export function useExportActions({
   viewModeRef: { current: ViewMode };
   wasmReady: boolean;
   runByteTransformInWorker: (payload: ByteTransformWorkerPayload) => Promise<Uint8Array>;
+  runByteTransformSizeInWorker: (payload: ByteTransformWorkerPayload) => Promise<number>;
 }) {
+  const outputSizeRequestId = useRef(0);
+
   const validateValue = useCallback(() => {
     if (activeTabId === null) {
       updateStatus(t('status.openFileFirst'), 'warn');
@@ -118,9 +123,80 @@ export function useExportActions({
     wasmReady,
   ]);
 
-  const refreshOutputBytesForOptions = useCallback(() => {
+  const refreshOutputBytesForOptions = useCallback(async (nextTargetBinaryEncoding = targetBinaryEncoding) => {
+    outputSizeRequestId.current += 1;
+    const requestId = outputSizeRequestId.current;
     setLastOutputBytes(null);
-  }, [setLastOutputBytes]);
+
+    if (activeTabId === null || !wasmReady) {
+      return;
+    }
+
+    try {
+      if (binaryBytes && binaryEncoding) {
+        if (sameRtonEncoding(binaryEncoding, nextTargetBinaryEncoding)) {
+          setLastOutputBytes(binaryBytes.byteLength);
+          return;
+        }
+
+        updateStatus(t('status.generatingRtonSize', { encoding: formatRtonEncoding(nextTargetBinaryEncoding, t) }), 'warn');
+        const byteLength = await runByteTransformSizeInWorker({
+          kind: 'bytes',
+          source: binaryEncoding,
+          target: nextTargetBinaryEncoding,
+          bytes: new Uint8Array(binaryBytes),
+        });
+        if (requestId === outputSizeRequestId.current) {
+          setLastOutputBytes(byteLength);
+          updateStatus(
+            t('status.rtonSizeGenerated', {
+              encoding: formatRtonEncoding(nextTargetBinaryEncoding, t),
+              size: formatBytes(byteLength),
+            }),
+            'ok',
+          );
+        }
+        return;
+      }
+
+      const value = currentValueRef.current;
+      if (!value) {
+        return;
+      }
+
+      updateStatus(t('status.generatingRtonSize', { encoding: formatRtonEncoding(nextTargetBinaryEncoding, t) }), 'warn');
+      const byteLength = await runByteTransformSizeInWorker({
+        kind: 'value',
+        target: nextTargetBinaryEncoding,
+        value,
+      });
+      if (requestId === outputSizeRequestId.current) {
+        setLastOutputBytes(byteLength);
+        updateStatus(
+          t('status.rtonSizeGenerated', {
+            encoding: formatRtonEncoding(nextTargetBinaryEncoding, t),
+            size: formatBytes(byteLength),
+          }),
+          'ok',
+        );
+      }
+    } catch (error) {
+      if (requestId === outputSizeRequestId.current && errorMessage(error) !== t('status.byteTransformCancelled')) {
+        updateStatus(errorMessage(error), 'error');
+      }
+    }
+  }, [
+    activeTabId,
+    binaryBytes,
+    binaryEncoding,
+    currentValueRef,
+    runByteTransformSizeInWorker,
+    setLastOutputBytes,
+    t,
+    targetBinaryEncoding,
+    updateStatus,
+    wasmReady,
+  ]);
 
   const downloadRton = useCallback(async () => {
     if (activeTabId === null) {

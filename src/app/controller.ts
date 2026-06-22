@@ -157,7 +157,7 @@ export function useRtonEditorController() {
     [getLangLabel, lang, langs],
   );
 
-  const { runByteTransformInWorker } = useByteTransformWorker({
+  const { runByteTransformInWorker, runByteTransformSizeInWorker } = useByteTransformWorker({
     t,
     onError: (message) => updateStatus(message, 'error'),
   });
@@ -455,6 +455,7 @@ export function useRtonEditorController() {
     viewModeRef,
     wasmReady,
     runByteTransformInWorker,
+    runByteTransformSizeInWorker,
   });
 
   useEffect(() => {
@@ -664,17 +665,17 @@ export function useRtonEditorController() {
   const onCompactOutputChange = useCallback(
     (checked: boolean) => {
       setCompactOutput(checked);
-      refreshOutputBytesForOptions();
+      void refreshOutputBytesForOptions({ compact: checked, encrypted: encryptOutput });
     },
-    [refreshOutputBytesForOptions, setCompactOutput],
+    [encryptOutput, refreshOutputBytesForOptions, setCompactOutput],
   );
 
   const onEncryptOutputChange = useCallback(
     (checked: boolean) => {
       setEncryptOutput(checked);
-      refreshOutputBytesForOptions();
+      void refreshOutputBytesForOptions({ compact: compactOutput, encrypted: checked });
     },
-    [refreshOutputBytesForOptions, setEncryptOutput],
+    [compactOutput, refreshOutputBytesForOptions, setEncryptOutput],
   );
 
   const onClearFileSearch = useCallback(() => {

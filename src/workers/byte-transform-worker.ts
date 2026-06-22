@@ -17,6 +17,7 @@ type ByteTransformRequest =
       kind: 'value';
       target: ByteTransformTarget;
       value: RtonValue;
+      result?: ByteTransformResultKind;
     }
   | {
       id: number;
@@ -24,14 +25,18 @@ type ByteTransformRequest =
       source: ByteTransformTarget;
       target: ByteTransformTarget;
       bytes: Uint8Array;
+      result?: ByteTransformResultKind;
     };
+
+type ByteTransformResultKind = 'bytes' | 'size';
 
 type ByteTransformResponse =
   | {
       id: number;
       target: ByteTransformTarget;
       ok: true;
-      bytes: Uint8Array;
+      byteLength: number;
+      bytes?: Uint8Array;
       elapsedMs: number;
     }
   | {
@@ -58,10 +63,11 @@ async function handleRequest(request: ByteTransformRequest) {
       id: request.id,
       target: request.target,
       ok: true,
-      bytes,
+      byteLength: bytes.byteLength,
+      ...(request.result === 'size' ? {} : { bytes }),
       elapsedMs: performance.now() - startedAt,
     };
-    postWorkerMessage(response, [bytes.buffer as ArrayBuffer]);
+    postWorkerMessage(response, request.result === 'size' ? undefined : [bytes.buffer as ArrayBuffer]);
   } catch (error) {
     const response: ByteTransformResponse = {
       id: request.id,
