@@ -25,7 +25,7 @@ import {
 import init from './wasm/rton-editor/rton_editor_wasm';
 import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
 import { DraggableToolbar, type ToolbarGroupConfig, type ToolbarGroupId } from './components/DraggableToolbar';
-import { EditorTabStrip, reorderTabs, type TabDropPlacement } from './components/EditorTabStrip';
+import { EditorTabStrip, type TabDropPlacement } from './components/EditorTabStrip';
 import { HexEditor, type HexEditorJumpTarget } from './components/HexEditor';
 import { LoadedFilesTree } from './components/LoadedFilesTree';
 import { MetaItem, PanelHeader, PanelResizeHandle, Stat, type PanelSide } from './components/Panels';
@@ -89,6 +89,15 @@ import {
   type ViewMode,
 } from './rton-codec';
 import { createEditorTabFromValue, type EditorTab } from './editor-tabs';
+import {
+  appendEditorTabs,
+  closeEditorTabState,
+  createActiveEditorTabSnapshot,
+  findEditorTab,
+  moveEditorTabState,
+  syncActiveEditorTab,
+  unlinkLoadedFileTab,
+} from './editor-workspace';
 import {
   applyThemePreference,
   readLineWrappingPreference,
@@ -282,13 +291,9 @@ export function App() {
   }, [clearParseTimer, invalidateFormatWork]);
 
   const snapshotActiveTab = useCallback(
-    (): EditorTab | null => {
-      if (activeTabId === null) {
-        return null;
-      }
-
-      return {
-        id: activeTabId,
+    () =>
+      createActiveEditorTabSnapshot({
+        activeTabId,
         fileName,
         sourceBytes,
         binaryBytes,
@@ -305,8 +310,7 @@ export function App() {
         searchQuery,
         searchState,
         status,
-      };
-    },
+      }),
     [
       activeTabId,
       binaryBytes,
@@ -386,11 +390,7 @@ export function App() {
 
   const syncActiveTab = useCallback(
     (nextTabs: EditorTab[] = tabs) => {
-      const snapshot = snapshotActiveTab();
-      if (!snapshot) {
-        return nextTabs;
-      }
-      return nextTabs.map((tab) => (tab.id === snapshot.id ? snapshot : tab));
+      return syncActiveEditorTab(nextTabs, snapshotActiveTab());
     },
     [snapshotActiveTab, tabs],
   );
@@ -401,11 +401,15 @@ export function App() {
         return;
       }
 
-      const nextActive = newTabs[newTabs.length - 1];
-      setTabs([...syncActiveTab(), ...newTabs]);
+      const { nextActive, nextTabs } = appendEditorTabs(tabs, newTabs, snapshotActiveTab());
+      if (!nextActive) {
+        return;
+      }
+
+      setTabs(nextTabs);
       restoreEditorTab(nextActive);
     },
-    [restoreEditorTab, syncActiveTab],
+    [restoreEditorTab, snapshotActiveTab, tabs],
   );
 
   const activateEditorTab = useCallback(
@@ -415,7 +419,7 @@ export function App() {
       }
 
       const syncedTabs = syncActiveTab();
-      const target = syncedTabs.find((tab) => tab.id === tabId);
+      const target = findEditorTab(syncedTabs, tabId);
       if (!target) {
         return;
       }
@@ -429,24 +433,22 @@ export function App() {
   const closeEditorTab = useCallback(
     (tabId: number) => {
       const syncedTabs = syncActiveTab();
-      const closeIndex = syncedTabs.findIndex((tab) => tab.id === tabId);
-      if (closeIndex === -1) {
+      const result = closeEditorTabState(syncedTabs, tabId, activeTabId);
+      if (!result.closed) {
         return;
       }
 
-      setLoadedFiles((files) => files.map((file) => (file.tabId === tabId ? { ...file, tabId: null } : file)));
+      setLoadedFiles((files) => unlinkLoadedFileTab(files, tabId));
 
-      const nextTabs = syncedTabs.filter((tab) => tab.id !== tabId);
-      if (nextTabs.length === 0) {
+      if (result.nextTabs.length === 0) {
         setTabs([]);
         restoreEmptyWorkspace({ message: t('status.noOpenFiles'), tone: 'warn' });
         return;
       }
 
-      setTabs(nextTabs);
-      if (tabId === activeTabId) {
-        const nextActive = syncedTabs[closeIndex + 1] ?? syncedTabs[closeIndex - 1] ?? nextTabs[0];
-        restoreEditorTab(nextActive);
+      setTabs(result.nextTabs);
+      if (result.nextActive) {
+        restoreEditorTab(result.nextActive);
       }
     },
     [activeTabId, restoreEditorTab, restoreEmptyWorkspace, syncActiveTab, t],
@@ -457,7 +459,7 @@ export function App() {
       if (tabId === targetTabId || tabs.length < 2) {
         return;
       }
-      setTabs(reorderTabs(syncActiveTab(), tabId, targetTabId, placement));
+      setTabs(moveEditorTabState(syncActiveTab(), tabId, targetTabId, placement));
     },
     [syncActiveTab, tabs.length],
   );
