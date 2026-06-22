@@ -92,11 +92,8 @@ import {
   SYSTEM_DARK_QUERY,
   type ThemePreference,
 } from './preferences';
-import {
-  buildLoadedFileItems,
-  filterLoadedFileItems,
-  type LoadedRtonFile,
-} from './loaded-file-items';
+import type { LoadedRtonFile } from './loaded-file-items';
+import { useLoadedFileListState } from './loaded-file-list-state';
 import {
   clampPanelWidth,
   LEFT_PANEL_DEFAULT_WIDTH,
@@ -122,7 +119,6 @@ export function App() {
   const { lang, langs, getLangLabel, setLang, t } = useI18n();
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [loadedFiles, setLoadedFiles] = useState<LoadedRtonFile[]>([]);
-  const [selectedFileKeys, setSelectedFileKeys] = useState<Set<string>>(() => new Set());
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const [wasmReady, setWasmReady] = useState(false);
   const [fileName, setFileName] = useState('');
@@ -143,7 +139,6 @@ export function App() {
   const [editorSurface, setEditorSurface] = useState<EditorSurface>('text');
   const [surfaceNote, setSurfaceNote] = useState(() => t('app.waitingFile'));
   const [status, setStatus] = useState<StatusState>(() => ({ message: t('status.wasmInitializing'), tone: 'warn' }));
-  const [fileSearchQuery, setFileSearchQuery] = useState('');
   const [dragging, setDragging] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
@@ -755,32 +750,33 @@ export function App() {
     }
   }, [activeTabId, validateValue, wasmReady]);
 
-	  const loadedFileItems = useMemo(
-    () => buildLoadedFileItems({ files: loadedFiles, tabs, activeTabId, fileName, sourceBytes, viewMode, editorSurface, t }),
-    [activeTabId, editorSurface, fileName, lang, loadedFiles, sourceBytes, tabs, viewMode, t],
-  );
-  const filteredLoadedFileItems = useMemo(
-    () => filterLoadedFileItems(loadedFileItems, fileSearchQuery),
-    [fileSearchQuery, loadedFileItems],
-  );
-  const fileSearchActive = fileSearchQuery.trim().length > 0;
-  const listedFileCount = loadedFileItems.length;
-  const visibleFileCount = filteredLoadedFileItems.length;
-  const selectedFileCount = selectedFileKeys.size;
-  const selectedVisibleFileCount = filteredLoadedFileItems.reduce(
-    (count, item) => count + (selectedFileKeys.has(item.key) ? 1 : 0),
-    0,
-  );
-  const fileListSubtitle = fileSearchActive
-    ? t('fileList.matchCount', {
-        visible: visibleFileCount.toLocaleString(),
-        total: listedFileCount.toLocaleString(),
-        selected: selectedFileCount.toLocaleString(),
-      })
-    : t('fileList.selectedCount', {
-        selected: selectedFileCount.toLocaleString(),
-        total: listedFileCount.toLocaleString(),
-      });
+  const {
+    clearSelectedFiles,
+    fileListSubtitle,
+    fileSearchActive,
+    fileSearchQuery,
+    filteredLoadedFileItems,
+    listedFileCount,
+    loadedFileItems,
+    selectAllListedFiles,
+    selectedFileCount,
+    selectedFileKeys,
+    selectedVisibleFileCount,
+    setFileSearchQuery,
+    toggleSelectedFile,
+    toggleSelectedFiles,
+    visibleFileCount,
+  } = useLoadedFileListState({
+    activeTabId,
+    editorSurface,
+    fileName,
+    lang,
+    loadedFiles,
+    sourceBytes,
+    tabs,
+    t,
+    viewMode,
+  });
   const workspaceStyle = {
     '--rton-left-panel-width': `${leftPanelWidth}px`,
     '--rton-right-panel-width': `${rightPanelWidth}px`,
@@ -793,56 +789,6 @@ export function App() {
     } else {
       setRightPanelWidth(clamped);
     }
-  }, []);
-
-  useEffect(() => {
-    const availableKeys = new Set(loadedFileItems.map((item) => item.key));
-    setSelectedFileKeys((current) => {
-      const next = new Set([...current].filter((key) => availableKeys.has(key)));
-      return next.size === current.size ? current : next;
-    });
-  }, [loadedFileItems]);
-
-  const selectAllListedFiles = useCallback(() => {
-    setSelectedFileKeys((current) => {
-      const next = new Set(current);
-      filteredLoadedFileItems.forEach((item) => next.add(item.key));
-      return next;
-    });
-  }, [filteredLoadedFileItems]);
-
-  const clearSelectedFiles = useCallback(() => {
-    setSelectedFileKeys((current) => {
-      const next = new Set(current);
-      filteredLoadedFileItems.forEach((item) => next.delete(item.key));
-      return next;
-    });
-  }, [filteredLoadedFileItems]);
-
-  const toggleSelectedFile = useCallback((key: string, selected: boolean) => {
-    setSelectedFileKeys((current) => {
-      const next = new Set(current);
-      if (selected) {
-        next.add(key);
-      } else {
-        next.delete(key);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleSelectedFiles = useCallback((keys: string[], selected: boolean) => {
-    setSelectedFileKeys((current) => {
-      const next = new Set(current);
-      keys.forEach((key) => {
-        if (selected) {
-          next.add(key);
-        } else {
-          next.delete(key);
-        }
-      });
-      return next;
-    });
   }, []);
 
 	  const onEditorInput = (value: string) => {
