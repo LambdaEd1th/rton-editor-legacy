@@ -62,6 +62,7 @@ import {
   RIGHT_PANEL_DEFAULT_WIDTH,
 } from '../workspace/panel-layout';
 import { useByteTransformWorker } from '../hooks/worker-clients';
+import { buildOutputText } from './output-summary';
 
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
@@ -379,13 +380,18 @@ export function useRtonEditorController() {
     [compactOutput, encryptOutput],
   );
   const displayedHexBytes = binaryBytes;
-  const outputText = hasActiveFile
-    ? editorSurface === 'hex' && binaryBytes
-      ? `${formatBytes(binaryBytes.byteLength)} · ${t('app.rawBytes')}`
-      : lastOutputBytes
-        ? `${formatBytes(lastOutputBytes)} · ${compactOutput ? 'compact' : 'standard'}${encryptOutput ? ' · encrypted' : ''}`
-        : t('app.notGenerated')
-    : t('app.noOutput');
+  const outputText = buildOutputText({
+    binaryBytes,
+    binaryEncoding,
+    editorSurface,
+    editorText,
+    hasActiveFile,
+    lastOutputBytes,
+    surfaceNote,
+    targetBinaryEncoding,
+    t,
+    viewMode,
+  });
   const displaySurfaceNote =
     editorSurface === 'hex'
       ? binaryBytes
