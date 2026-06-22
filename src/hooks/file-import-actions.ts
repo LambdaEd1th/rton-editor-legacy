@@ -1,5 +1,10 @@
 import { useCallback } from 'react';
-import { createEditorTabFromDocument, createEditorTabFromValue, type EditorTab } from '../workspace/editor-tabs';
+import {
+  createEditorTabFromBytes,
+  createEditorTabFromDocument,
+  createEditorTabFromValue,
+  type EditorTab,
+} from '../workspace/editor-tabs';
 import {
   collectDirectoryEntries,
   collectLoadableCandidates,
@@ -16,6 +21,8 @@ import type { Translator } from '../localization/i18n';
 import type { PreviewPreference } from '../workspace/preferences';
 import {
   decodeLoadableSource,
+  isCompactRtonBytes,
+  isEncryptedRtonBytes,
   isPendingTextPreview,
   type EditorSurface,
   type DecodedLoadableSource,
@@ -40,6 +47,7 @@ export function useFileImportActions({
   setLoadedFiles,
   tabs,
   t,
+  updateEditorTab,
   updateStatus,
   viewModeRef,
   wasmReady,
@@ -57,6 +65,7 @@ export function useFileImportActions({
   setLoadedFiles: (updater: LoadedRtonFile[] | ((files: LoadedRtonFile[]) => LoadedRtonFile[])) => void;
   tabs: EditorTab[];
   t: Translator;
+  updateEditorTab: (tabId: number, updater: (tab: EditorTab) => EditorTab) => void;
   updateStatus: (message: string, tone?: Tone) => void;
   viewModeRef: { current: ViewMode };
   wasmReady: boolean;
@@ -76,6 +85,7 @@ export function useFileImportActions({
       }
 
       const loadedTabs: EditorTab[] = [];
+      const deferredDecodes: Array<{ bytes: Uint8Array; tabId: number }> = [];
       const errors: string[] = [];
       const { preferredEditorSurface, preferredViewMode } = getPreferredPreview({
         activeTabId,
@@ -93,7 +103,11 @@ export function useFileImportActions({
               decoded,
             }),
           );
+          const createdTabId = nextTabId.current;
           nextTabId.current += 1;
+          if (decoded.deferredDocumentBytes) {
+            deferredDecodes.push({ bytes: decoded.deferredDocumentBytes, tabId: createdTabId });
+          }
         } catch (error) {
           errors.push(`${normalizeDisplayPath(entry.path)}: ${errorMessage(error)}`);
         }
@@ -110,6 +124,16 @@ export function useFileImportActions({
           ? `${loadedTabs[0].status.message}${suffix}`
           : t('status.loadedFiles', { count: loadedTabs.length.toLocaleString(), suffix });
         updateStatus(message, 'ok');
+        for (const deferred of deferredDecodes) {
+          scheduleDeferredDocumentDecode({
+            bytes: deferred.bytes,
+            runRtonDecodeInWorker,
+            tabId: deferred.tabId,
+            t,
+            updateEditorTab,
+            updateStatus,
+          });
+        }
       }
 
       if (errors.length > 0) {
@@ -125,6 +149,7 @@ export function useFileImportActions({
       renderTextForValue,
       runRtonDecodeInWorker,
       t,
+      updateEditorTab,
       updateStatus,
       viewModeRef,
       wasmReady,
@@ -194,6 +219,16 @@ export function useFileImportActions({
         nextTabId.current += 1;
         setLoadedFiles((files) => files.map((file) => (file.id === fileId ? { ...file, tabId } : file)));
         openEditorTabs([tab]);
+        if (decoded.deferredDocumentBytes) {
+          scheduleDeferredDocumentDecode({
+            bytes: decoded.deferredDocumentBytes,
+            runRtonDecodeInWorker,
+            tabId,
+            t,
+            updateEditorTab,
+            updateStatus,
+          });
+        }
         if (tab.editorSurface === 'text' && tab.currentValue && isPendingTextPreview(tab.editorText)) {
           window.setTimeout(() => renderTextForValue(tab.currentValue as RtonValue, tab.viewMode), 0);
         }
@@ -215,6 +250,7 @@ export function useFileImportActions({
       setLoadedFiles,
       t,
       tabs,
+      updateEditorTab,
       updateStatus,
       viewModeRef,
       wasmReady,
@@ -272,7 +308,26 @@ async function decodeLoadableEntry(
   }
 
   const bytes = new Uint8Array(await entry.file.arrayBuffer());
-  const largeDocument = bytes.byteLength >= RTON_LARGE_DOCUMENT_THRESHOLD_BYTES;
+  const largeDocument = bytes.byteLength >= RTON_LARGE_DOCUMENT_THRESHOLD_BYTES && !isEncryptedRtonBytes(bytes);
+  if (largeDocument) {
+    const compact = isCompactRtonBytes(bytes);
+    return {
+      value: null,
+      rtonDocument: null,
+      editorText: '',
+      surfaceNote: t('format.largeDocumentIndexing'),
+      sourceBytes: bytes,
+      binaryBytes: bytes,
+      binaryEncoding: { compact, encrypted: false },
+      viewMode: preferredViewMode,
+      editorSurface: 'hex',
+      status: { message: t('status.largeRtonOpened'), tone: 'ok' },
+      parsedJson: null,
+      needsTextPreview: false,
+      deferredDocumentBytes: bytes,
+    };
+  }
+
   const { value, document, stats, plainBytes, compact, encrypted } = await runRtonDecodeInWorker(bytes, {
     includeValue: !largeDocument,
     retainDocument: largeDocument,
@@ -328,7 +383,20 @@ function createEditorTabFromDecodedSource({
   }
 
   if (!decoded.value) {
-    throw new Error(decoded.status.message);
+    return createEditorTabFromBytes({
+      id,
+      fileName,
+      editorText: decoded.editorText,
+      surfaceNote: decoded.surfaceNote,
+      sourceBytes: decoded.sourceBytes,
+      binaryBytes: decoded.binaryBytes,
+      binaryEncoding: decoded.binaryEncoding,
+      viewMode: decoded.viewMode,
+      editorSurface: decoded.editorSurface,
+      status: decoded.status,
+      stats: decoded.stats,
+      searchState: decoded.deferredDocumentBytes ? { kind: 'message', message: decoded.surfaceNote } : undefined,
+    });
   }
 
   return createEditorTabFromValue({
@@ -347,6 +415,54 @@ function createEditorTabFromDecodedSource({
     stats: decoded.stats,
     parsedJson: decoded.parsedJson,
   });
+}
+
+function scheduleDeferredDocumentDecode({
+  bytes,
+  runRtonDecodeInWorker,
+  tabId,
+  t,
+  updateEditorTab,
+  updateStatus,
+}: {
+  bytes: Uint8Array;
+  runRtonDecodeInWorker: (bytes: Uint8Array, options?: { includeValue?: boolean; retainDocument?: boolean }) => Promise<RtonDecodeWorkerOutput>;
+  tabId: number;
+  t: Translator;
+  updateEditorTab: (tabId: number, updater: (tab: EditorTab) => EditorTab) => void;
+  updateStatus: (message: string, tone?: Tone) => void;
+}) {
+  window.setTimeout(() => {
+    void runRtonDecodeInWorker(new Uint8Array(bytes), { includeValue: false, retainDocument: true })
+      .then(({ document, stats, plainBytes, compact }) => {
+        if (!document) {
+          throw new Error(t('status.largeRtonIndexFailed'));
+        }
+
+        updateEditorTab(tabId, (tab) => ({
+          ...tab,
+          sourceBytes: plainBytes,
+          binaryBytes: plainBytes,
+          binaryEncoding: { compact, encrypted: false },
+          rtonDocument: document,
+          stats,
+          surfaceNote: t('format.largeDocumentMode'),
+          searchState: { kind: 'idle' },
+          status: { message: t('status.largeRtonIndexed'), tone: 'ok' },
+        }));
+        updateStatus(t('status.largeRtonIndexed'), 'ok');
+      })
+      .catch((error: unknown) => {
+        const message = `${t('status.largeRtonIndexFailed')}: ${errorMessage(error)}`;
+        updateEditorTab(tabId, (tab) => ({
+          ...tab,
+          surfaceNote: t('format.largeDocumentIndexFailed'),
+          searchState: { kind: 'message', message },
+          status: { message, tone: 'error' },
+        }));
+        updateStatus(message, 'error');
+      });
+  }, 0);
 }
 
 function getPreferredPreview({

@@ -174,6 +174,56 @@ export function createEditorTabFromDocument({
   };
 }
 
+export function createEditorTabFromBytes({
+  id,
+  fileName,
+  editorText = '',
+  surfaceNote,
+  sourceBytes,
+  binaryBytes,
+  binaryEncoding,
+  viewMode = 'json',
+  editorSurface = 'hex',
+  status,
+  stats = emptyStats(),
+  searchState,
+}: {
+  id: number;
+  fileName: string;
+  editorText?: string;
+  surfaceNote?: string;
+  sourceBytes: Uint8Array | null;
+  binaryBytes?: Uint8Array | null;
+  binaryEncoding?: RtonBinaryEncoding | null;
+  viewMode?: ViewMode;
+  editorSurface?: EditorSurface;
+  status: StatusState;
+  stats?: Stats;
+  searchState?: SearchState;
+}): EditorTab {
+  const actualBinaryBytes = binaryBytes ?? sourceBytes;
+  return {
+    id,
+    fileName,
+    sourceBytes,
+    binaryBytes: actualBinaryBytes,
+    binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+    currentValue: null,
+    rtonDocument: null,
+    editorText,
+    lastOutputBytes: null,
+    parsedJson: null,
+    parseError: null,
+    stats,
+    viewMode,
+    editorSurface: editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text',
+    surfaceNote: surfaceNote ?? '',
+    searchQuery: '',
+    searchState: searchState ?? { kind: 'idle' },
+    status,
+  };
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }

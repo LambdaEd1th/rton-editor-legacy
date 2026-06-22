@@ -44,6 +44,7 @@ export type DecodedLoadableSource = {
   stats?: Stats;
   parsedJson?: JsonValue | null;
   needsTextPreview?: boolean;
+  deferredDocumentBytes?: Uint8Array;
 };
 
 export function isEncryptedRtonBytes(bytes: Uint8Array) {

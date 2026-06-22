@@ -358,6 +358,19 @@ export function useRtonEditorController() {
     [activeTabId, restoreEditorTab, syncActiveTab],
   );
 
+  const updateEditorTab = useCallback(
+    (tabId: number, updater: (tab: EditorTab) => EditorTab) => {
+      setTabs((currentTabs) => currentTabs.map((tab) => (tab.id === tabId ? updater(tab) : tab)));
+      if (activeTabId === tabId) {
+        const snapshot = snapshotActiveTab();
+        if (snapshot) {
+          restoreEditorTab(updater(snapshot));
+        }
+      }
+    },
+    [activeTabId, restoreEditorTab, snapshotActiveTab],
+  );
+
   const closeEditorTab = useCallback(
     (tabId: number) => {
       const syncedTabs = syncActiveTab();
@@ -619,6 +632,7 @@ export function useRtonEditorController() {
     setLoadedFiles,
     tabs,
     t,
+    updateEditorTab,
     updateStatus,
     viewModeRef,
     wasmReady,
