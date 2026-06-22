@@ -17,13 +17,14 @@ import { FileListPanel } from './components/FileListPanel';
 import { RightInspectorPanel } from './components/RightInspectorPanel';
 import { PanelResizeHandle, type PanelSide } from './components/Panels';
 import { useI18n } from './localization/use-i18n';
+import { useHexEditActions } from './hex-edit-actions';
 import {
   type RtonValue,
 } from './rton-value';
 import { sampleJson } from './sample';
 import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
 import type { RtonInlineSelectOption } from './components/RtonInlineSelect';
-import { collectStats, emptyStats } from './rton-value-analysis';
+import { emptyStats } from './rton-value-analysis';
 import { useTextFormatFlow } from './text-format-flow';
 import { useRtonValueActions } from './rton-value-actions';
 import { useRtonValueSearch } from './rton-value-search';
@@ -36,11 +37,8 @@ import {
 } from './file-export';
 import { useExportActions } from './export-actions';
 import {
-  decodeRtonSourceValue,
-  encodeRtonOutputBytes,
   parseJsonTextToRtonValue,
   rtonValueToJsonText,
-  rtonValueToJsonValue,
   type EditorSurface,
   type JsonValue,
   type RtonBinaryEncoding,
@@ -542,74 +540,34 @@ export function App() {
 	    scheduleEditorParse(viewModeRef.current, value);
 	  };
 
-  const openHexEditor = useCallback(() => {
-    if (activeTabId === null) {
-      updateStatus(t('status.openFileFirst'), 'warn');
-      return;
-    }
-
-    if (binaryBytes) {
-      setEditorSurface('hex');
-      setSurfaceNote(t('format.rtonEditable'));
-      return;
-    }
-
-    const value = currentValueRef.current;
-    if (!value) {
-      updateStatus(parseError ?? t('status.noSearchableValue'), 'error');
-      return;
-    }
-
-    try {
-	      const bytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
-	      setBinaryBytes(bytes);
-	      setBinaryEncoding({ compact: compactOutput, encrypted: encryptOutput });
-      setSourceBytes(bytes);
-      setLastOutputBytes(null);
-      setEditorSurface('hex');
-      setSurfaceNote(t('format.rtonEditable'));
-      updateStatus(t('status.rtonBinaryGenerated'), 'ok');
-    } catch (error) {
-      updateStatus(errorMessage(error), 'error');
-    }
-  }, [activeTabId, binaryBytes, compactOutput, encryptOutput, parseError, t, updateStatus]);
-
-  const onHexBytesChange = useCallback(
-    (nextBytes: Uint8Array) => {
-      if (activeTabId === null) {
-        return;
-      }
-
-      clearPendingWork();
-      setBinaryBytes(nextBytes);
-      setSourceBytes(nextBytes);
-      setLastOutputBytes(null);
-
-      try {
-	      const { value, encrypted, compact } = decodeRtonSourceValue(nextBytes);
-	      setCurrentValueState(value);
-	      setParsedJson(rtonValueToJsonValue(value));
-	      setParseError(null);
-	      setStats(collectStats(value));
-	      setBinaryEncoding({ compact, encrypted });
-	      setSearchState({ kind: 'idle' });
-        renderTextForValue(value, viewModeRef.current);
-        setSurfaceNote(t('format.rtonEditable'));
-        updateStatus(t('status.rtonUpdated', { prefix: encrypted ? `${t('toolbar.encrypted')} ` : '' }), 'ok');
-      } catch (error) {
-        const message = errorMessage(error);
-        invalidateFormatWork();
-        setCurrentValueState(null);
-        setParsedJson(null);
-        setParseError(message);
-        setStats(emptyStats());
-        setSearchState({ kind: 'message', message });
-        setSurfaceNote(t('format.rtonParseUnavailable'));
-        updateStatus(t('status.rtonUpdateFailed', { message }), 'error');
-      }
-    },
-	    [activeTabId, clearPendingWork, invalidateFormatWork, renderTextForValue, setCurrentValueState, t, updateStatus],
-	  );
+  const {
+    onHexBytesChange,
+    openHexEditor,
+  } = useHexEditActions({
+    activeTabId,
+    binaryBytes,
+    clearPendingWork,
+    compactOutput,
+    currentValueRef,
+    encryptOutput,
+    invalidateFormatWork,
+    parseError,
+    renderTextForValue,
+    setBinaryBytes,
+    setBinaryEncoding,
+    setCurrentValueState,
+    setEditorSurface,
+    setLastOutputBytes,
+    setParseError,
+    setParsedJson,
+    setSearchState,
+    setSourceBytes,
+    setStats,
+    setSurfaceNote,
+    t,
+    updateStatus,
+    viewModeRef,
+  });
 
   const loadSample = () => {
     if (!wasmReady) {
