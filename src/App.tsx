@@ -21,15 +21,10 @@ import {
   type RtonValue,
 } from './rton-value';
 import { sampleJson } from './sample';
-import { locateRtonValueOffset } from './rton-offset-map';
 import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
 import type { RtonInlineSelectOption } from './components/RtonInlineSelect';
-import {
-  replaceRtonValueAtPath,
-  type RtonValuePath,
-} from './rton-value-editing';
-import { locateRtonPathInText } from './rton-text-locator';
 import { collectStats, emptyStats } from './rton-value-analysis';
+import { useRtonValueActions } from './rton-value-actions';
 import { useRtonValueSearch } from './rton-value-search';
 import {
   collectDroppedEntries,
@@ -42,7 +37,6 @@ import { useExportActions } from './export-actions';
 import {
   decodeRtonSourceValue,
   encodeRtonOutputBytes,
-  isEncryptedRtonBytes,
   parseJsonTextToRtonValue,
   rtonValueToJsonText,
   rtonValueToJsonValue,
@@ -883,88 +877,34 @@ export function App() {
     wasmReady,
   });
 
-  const updateRtonValueNode = useCallback(
-    (path: RtonValuePath, nextValue: RtonValue) => {
-      if (activeTabId === null) {
-        updateStatus(t('status.openFileFirst'), 'warn');
-        return;
-      }
-
-      const current = currentValueRef.current;
-      if (!current) {
-        updateStatus(parseError ?? t('status.noSearchableValue'), 'error');
-        return;
-      }
-
-      try {
-        const updated = replaceRtonValueAtPath(current, path, nextValue);
-        setCurrentValueState(updated);
-        setParsedJson(rtonValueToJsonValue(updated));
-        setParseError(null);
-	        setStats(collectStats(updated));
-	        setLastOutputBytes(null);
-	        setBinaryBytes(null);
-        setBinaryEncoding(null);
-	        setEditorSurface('text');
-        const rendered = renderTextForValue(updated, viewModeRef.current);
-        updateStatus(rendered ? t('status.rtonValueUpdated') : t('status.rtonValueUpdatedNoJson'), rendered ? 'ok' : 'warn');
-      } catch (error) {
-        updateStatus(errorMessage(error), 'error');
-      }
-    },
-    [activeTabId, parseError, renderTextForValue, setCurrentValueState, t, updateStatus],
-  );
-
-  const navigateToRtonValueNode = useCallback(
-    (path: RtonValuePath) => {
-      const value = currentValueRef.current;
-      if (!value) {
-        updateStatus(parseError ?? t('status.noSearchableValue'), 'warn');
-        return;
-      }
-
-	      if (editorSurface === 'hex') {
-	        const navigableBytes = displayedHexBytes ?? binaryBytes;
-	        if (!navigableBytes) {
-	          updateStatus(t('status.noJumpBytes'), 'warn');
-          return;
-        }
-        if (isEncryptedRtonBytes(navigableBytes)) {
-          updateStatus(t('status.encryptedOffsetUnavailable'), 'warn');
-          return;
-        }
-
-        const offset = locateRtonValueOffset(navigableBytes, path);
-        if (offset === null) {
-          updateStatus(t('status.offsetNotFound'), 'warn');
-          return;
-        }
-
-        setHexJumpTarget({
-          id: nextHexJumpId.current,
-          offset,
-        });
-        nextHexJumpId.current += 1;
-        updateStatus(t('status.jumpedOffset', { offset: offset.toString(16).toUpperCase() }), 'ok');
-        return;
-      }
-
-      const position = locateRtonPathInText(value, path, editorText, viewModeRef.current);
-      if (!position) {
-        updateStatus(t('status.textLineNotFound'), 'warn');
-        return;
-      }
-
-      setEditorJumpTarget({
-        id: nextEditorJumpId.current,
-        line: position.line,
-        column: position.column,
-      });
-      nextEditorJumpId.current += 1;
-      updateStatus(t('status.jumpedLine', { line: position.line.toLocaleString() }), 'ok');
-    },
-    [binaryBytes, displayedHexBytes, editorSurface, editorText, parseError, t, updateStatus],
-  );
+  const {
+    navigateToRtonValueNode,
+    updateRtonValueNode,
+  } = useRtonValueActions({
+    activeTabId,
+    binaryBytes,
+    currentValueRef,
+    displayedHexBytes,
+    editorSurface,
+    editorText,
+    nextEditorJumpId,
+    nextHexJumpId,
+    parseError,
+    renderTextForValue,
+    setBinaryBytes,
+    setBinaryEncoding,
+    setCurrentValueState,
+    setEditorJumpTarget,
+    setEditorSurface,
+    setHexJumpTarget,
+    setLastOutputBytes,
+    setParseError,
+    setParsedJson,
+    setStats,
+    t,
+    updateStatus,
+    viewModeRef,
+  });
 
   const runEditorToolbarAction = useCallback(
     (kind: EditorShortcutKind) => {
