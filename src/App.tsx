@@ -16,7 +16,6 @@ import { AppStatusBar } from './components/AppStatusBar';
 import { FileListPanel } from './components/FileListPanel';
 import { RightInspectorPanel } from './components/RightInspectorPanel';
 import { PanelResizeHandle, type PanelSide } from './components/Panels';
-import type { StructuredFormatMode } from './format-conversion';
 import { useI18n } from './localization/use-i18n';
 import {
   type RtonValue,
@@ -43,29 +42,18 @@ import {
   type RtonLoadEntry,
 } from './file-loading';
 import {
-  downloadBlob,
-  downloadBytes,
   formatBytes,
-  outputBaseName,
-  timestampForFileName,
 } from './file-export';
-import {
-  createBatchExportArchive,
-  encodeBatchExportValue,
-  resolveBatchExportItemValue,
-  type BatchExportMode,
-} from './batch-export';
+import { useExportActions } from './export-actions';
 import {
   decodeLoadableSource,
   decodeRtonSourceValue,
   encodeRtonOutputBytes,
-  formatRtonEncoding,
   isEncryptedRtonBytes,
   isPendingTextPreview,
   parseJsonTextToRtonValue,
   rtonValueToJsonText,
   rtonValueToJsonValue,
-  sameRtonEncoding,
   type EditorSurface,
   type JsonValue,
   type RtonBinaryEncoding,
@@ -620,7 +608,6 @@ export function App() {
     () => ({ compact: compactOutput, encrypted: encryptOutput }),
     [compactOutput, encryptOutput],
   );
-  const hexOutputMatchesSource = binaryEncoding !== null && sameRtonEncoding(binaryEncoding, targetBinaryEncoding);
   const displayedHexBytes = binaryBytes;
   const outputText = hasActiveFile
     ? editorSurface === 'hex' && binaryBytes
@@ -636,48 +623,63 @@ export function App() {
         : t('app.rtonUnavailable')
       : surfaceNote;
 
-	  const validateValue = useCallback(() => {
-    if (activeTabId === null) {
-      updateStatus(t('status.openFileFirst'), 'warn');
-      return;
-    }
+  const {
+    clearSelectedFiles,
+    fileListSubtitle,
+    fileSearchActive,
+    fileSearchQuery,
+    filteredLoadedFileItems,
+    listedFileCount,
+    loadedFileItems,
+    selectAllListedFiles,
+    selectedFileCount,
+    selectedFileKeys,
+    selectedVisibleFileCount,
+    setFileSearchQuery,
+    toggleSelectedFile,
+    toggleSelectedFiles,
+    visibleFileCount,
+  } = useLoadedFileListState({
+    activeTabId,
+    editorSurface,
+    fileName,
+    lang,
+    loadedFiles,
+    sourceBytes,
+    tabs,
+    t,
+    viewMode,
+  });
 
-    if (!wasmReady) {
-      updateStatus(t('status.wasmStillLoading'), 'warn');
-      return;
-    }
-
-    try {
-      if (editorSurface === 'hex' && binaryBytes) {
-        setLastOutputBytes(hexOutputMatchesSource ? binaryBytes.byteLength : null);
-        updateStatus(t('format.exportable', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
-        return;
-      }
-
-      const value = currentValueRef.current;
-      if (!value) {
-        throw new Error(parseError ?? t('status.noSearchableValue'));
-      }
-      setLastOutputBytes(null);
-      updateStatus(t('format.exportable', { label: viewModeRef.current.toUpperCase() }), 'ok');
-    } catch (error) {
-      updateStatus(errorMessage(error), 'error');
-    }
-	  }, [
-	    activeTabId,
-	    binaryBytes,
-		    editorSurface,
-		    hexOutputMatchesSource,
-		    parseError,
-	    t,
-	    targetBinaryEncoding,
-	    updateStatus,
-	    wasmReady,
-	  ]);
-
-  const refreshOutputBytesForOptions = useCallback(() => {
-    setLastOutputBytes(null);
-  }, []);
+  const {
+    batchExportSelectedFiles,
+    downloadJson,
+    downloadRton,
+    downloadStructuredFormat,
+    refreshOutputBytesForOptions,
+    validateValue,
+  } = useExportActions({
+    activeTabId,
+    binaryBytes,
+    binaryEncoding,
+    compactOutput,
+    currentValueRef,
+    editorSurface,
+    encryptOutput,
+    fileName,
+    loadedFileItems,
+    loadedFiles,
+    parseError,
+    selectedFileKeys,
+    setLastOutputBytes,
+    tabs,
+    targetBinaryEncoding,
+    t,
+    updateStatus,
+    viewModeRef,
+    wasmReady,
+    runByteTransformInWorker,
+  });
 
   useEffect(() => {
     viewModeRef.current = viewMode;
@@ -749,34 +751,6 @@ export function App() {
       validateValue();
     }
   }, [activeTabId, validateValue, wasmReady]);
-
-  const {
-    clearSelectedFiles,
-    fileListSubtitle,
-    fileSearchActive,
-    fileSearchQuery,
-    filteredLoadedFileItems,
-    listedFileCount,
-    loadedFileItems,
-    selectAllListedFiles,
-    selectedFileCount,
-    selectedFileKeys,
-    selectedVisibleFileCount,
-    setFileSearchQuery,
-    toggleSelectedFile,
-    toggleSelectedFiles,
-    visibleFileCount,
-  } = useLoadedFileListState({
-    activeTabId,
-    editorSurface,
-    fileName,
-    lang,
-    loadedFiles,
-    sourceBytes,
-    tabs,
-    t,
-    viewMode,
-  });
   const workspaceStyle = {
     '--rton-left-panel-width': `${leftPanelWidth}px`,
     '--rton-right-panel-width': `${rightPanelWidth}px`,
@@ -1055,158 +1029,6 @@ export function App() {
       updateStatus(errorMessage(error), 'error');
     }
   };
-
-  const downloadRton = async () => {
-    if (activeTabId === null) {
-      updateStatus(t('status.openFileFirst'), 'warn');
-      return;
-    }
-
-    if (!wasmReady) {
-      updateStatus(t('status.wasmStillLoading'), 'warn');
-      return;
-    }
-
-		    try {
-	      if (binaryBytes && binaryEncoding) {
-	        let outputBytes: Uint8Array;
-	        if (sameRtonEncoding(binaryEncoding, targetBinaryEncoding)) {
-	          outputBytes = binaryBytes;
-	        } else {
-	          updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(targetBinaryEncoding, t) }), 'warn');
-	          outputBytes = await runByteTransformInWorker({
-	            kind: 'bytes',
-	            source: binaryEncoding,
-	            target: targetBinaryEncoding,
-	            bytes: new Uint8Array(binaryBytes),
-	          });
-	        }
-		        setLastOutputBytes(outputBytes.byteLength);
-		        downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
-	        updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
-	        return;
-	      }
-
-      const value = currentValueRef.current;
-      if (!value) {
-        throw new Error(parseError ?? t('status.noSearchableValue'));
-      }
-      updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(targetBinaryEncoding, t) }), 'warn');
-      const outputBytes = await runByteTransformInWorker({
-        kind: 'value',
-        target: targetBinaryEncoding,
-        value,
-      });
-      setLastOutputBytes(outputBytes.byteLength);
-      downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
-      updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
-    } catch (error) {
-      updateStatus(errorMessage(error), 'error');
-    }
-	  };
-
-  const downloadJson = () => {
-    if (activeTabId === null) {
-      updateStatus(t('status.openFileFirst'), 'warn');
-      return;
-    }
-
-    try {
-      const value = currentValueRef.current;
-      if (!value) {
-        throw new Error(parseError ?? t('status.noSearchableValue'));
-      }
-      downloadBlob(new Blob([rtonValueToJsonText(value, true)], { type: 'application/json' }), outputBaseName(fileName, 'json'));
-      updateStatus(t('format.generated', { label: 'JSON' }), 'ok');
-    } catch (error) {
-      updateStatus(errorMessage(error), 'error');
-    }
-  };
-
-  const downloadStructuredFormat = async (mode: StructuredFormatMode) => {
-    if (activeTabId === null) {
-      updateStatus(t('status.openFileFirst'), 'warn');
-      return;
-    }
-
-    try {
-      const value = currentValueRef.current;
-      if (!value) {
-        throw new Error(parseError ?? t('status.noSearchableValue'));
-      }
-      const { formatStructuredText } = await import('./format-conversion');
-      const text = formatStructuredText(value, mode);
-      downloadBlob(text, outputBaseName(fileName, mode), mode === 'yaml' ? 'application/yaml' : 'application/toml');
-      updateStatus(t('format.generated', { label: mode.toUpperCase() }), 'ok');
-    } catch (error) {
-      updateStatus(errorMessage(error), 'error');
-    }
-  };
-
-  const batchExportSelectedFiles = useCallback(
-    async (mode: BatchExportMode) => {
-      if (!wasmReady) {
-        updateStatus(t('status.wasmStillLoading'), 'warn');
-        return;
-      }
-
-      const selectedItems = loadedFileItems.filter((item) => selectedFileKeys.has(item.key));
-      if (selectedItems.length === 0) {
-        updateStatus(t('status.selectFilesFirst'), 'warn');
-        return;
-      }
-
-      updateStatus(t('status.batchConverting', { count: selectedItems.length.toLocaleString(), format: mode.toUpperCase() }), 'warn');
-
-      const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
-      const filesById = new Map(loadedFiles.map((file) => [file.id, file]));
-      const structuredFormatter =
-        mode === 'yaml' || mode === 'toml' ? (await import('./format-conversion')).formatStructuredText : null;
-
-      const result = await createBatchExportArchive({
-        items: selectedItems,
-        mode,
-        resolveValue: (item) =>
-          resolveBatchExportItemValue(item, {
-            activeTabId,
-            currentValue: currentValueRef.current,
-            filesById,
-            tabsById,
-          }),
-        encodeValue: (value) =>
-          encodeBatchExportValue(value, mode, {
-            compact: compactOutput,
-            encrypted: encryptOutput,
-            structuredFormatter,
-          }),
-        describeError: errorMessage,
-      });
-
-      if (!result.zipBytes) {
-        updateStatus(result.errors[0] ?? t('status.noBatchSuccess'), 'error');
-        return;
-      }
-
-      downloadBytes(result.zipBytes, `rton-editor-${mode}-${timestampForFileName()}.zip`);
-      const errorSuffix = result.errors.length > 0 ? t('status.batchFailureSuffix', { count: result.errors.length.toLocaleString() }) : '';
-      updateStatus(
-        t('status.batchExported', { count: result.exportedCount.toLocaleString(), format: mode.toUpperCase(), suffix: errorSuffix }),
-        result.errors.length > 0 ? 'warn' : 'ok',
-      );
-    },
-    [
-      activeTabId,
-      compactOutput,
-      encryptOutput,
-      loadedFileItems,
-      loadedFiles,
-      selectedFileKeys,
-      t,
-      tabs,
-      updateStatus,
-      wasmReady,
-    ],
-  );
 
   const updateRtonValueNode = useCallback(
     (path: RtonValuePath, nextValue: RtonValue) => {
