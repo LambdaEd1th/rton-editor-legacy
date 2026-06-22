@@ -109,71 +109,12 @@ import {
   RIGHT_PANEL_DEFAULT_WIDTH,
 } from './panel-layout';
 import { buttonClass, cx, modeButtonClass } from './ui-classes';
-
-type FormatWorkerResponse =
-  | {
-      action: 'format';
-      id: number;
-      mode: ViewMode;
-      ok: true;
-      text: string;
-      truncated: boolean;
-    }
-  | {
-      action: 'parse';
-      id: number;
-      mode: Exclude<ViewMode, 'json'>;
-      ok: true;
-      value: RtonValue;
-      plainValue: unknown;
-    }
-  | {
-      action: 'format' | 'parse';
-      id: number;
-      mode: ViewMode;
-      ok: false;
-      error: string;
-    };
-
-type ByteTransformWorkerResponse =
-  | {
-      id: number;
-      ok: true;
-      bytes: Uint8Array;
-    }
-  | {
-      id: number;
-      ok: false;
-      error: string;
-    };
-
-type ByteTransformWorkerRequest =
-  | {
-      id: number;
-      kind: 'value';
-      target: RtonBinaryEncoding;
-      value: RtonValue;
-    }
-  | {
-      id: number;
-      kind: 'bytes';
-      source: RtonBinaryEncoding;
-      target: RtonBinaryEncoding;
-      bytes: Uint8Array;
-    };
-
-type ByteTransformWorkerPayload =
-  | {
-      kind: 'value';
-      target: RtonBinaryEncoding;
-      value: RtonValue;
-    }
-  | {
-      kind: 'bytes';
-      source: RtonBinaryEncoding;
-      target: RtonBinaryEncoding;
-      bytes: Uint8Array;
-    };
+import {
+  useByteTransformWorker,
+  useFormatWorkerClient,
+  type ActiveFormatRequest,
+  type FormatWorkerResponse,
+} from './worker-clients';
 
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
@@ -227,22 +168,7 @@ export function App() {
   const viewModeRef = useRef<ViewMode>(viewMode);
   const parseTimer = useRef<number | null>(null);
   const searchTimer = useRef<number | null>(null);
-  const formatTimeout = useRef<number | null>(null);
   const activeSearchId = useRef(0);
-  const formatWorker = useRef<Worker | null>(null);
-  const activeFormatRequest = useRef<{ action: 'format' | 'parse'; id: number; mode: ViewMode } | null>(null);
-  const formatRequestId = useRef(0);
-  const byteTransformWorker = useRef<Worker | null>(null);
-  const byteTransformRequestId = useRef(0);
-  const byteTransformPromises = useRef(
-    new Map<
-      number,
-      {
-        resolve: (bytes: Uint8Array) => void;
-        reject: (error: Error) => void;
-      }
-    >(),
-  );
   const themeOptions = useMemo<Array<RtonInlineSelectOption<ThemePreference>>>(
     () => [
       { value: 'system', label: t('theme.system') },
@@ -272,41 +198,40 @@ export function App() {
     }
   }, []);
 
-  const clearFormatTimeout = useCallback(() => {
-    if (formatTimeout.current !== null) {
-      window.clearTimeout(formatTimeout.current);
-      formatTimeout.current = null;
-    }
-  }, []);
-
-  const terminateFormatWorker = useCallback(() => {
-    clearFormatTimeout();
-    activeFormatRequest.current = null;
-    if (formatWorker.current) {
-      formatWorker.current.terminate();
-      formatWorker.current = null;
-    }
-  }, [clearFormatTimeout]);
-
-  const beginFormatWorkerRequest = useCallback(
-    (action: 'format' | 'parse', mode: ViewMode) => {
-      terminateFormatWorker();
-      formatRequestId.current += 1;
-      activeFormatRequest.current = { action, id: formatRequestId.current, mode };
-      return formatRequestId.current;
+  const handleFormatWorkerResponse = useCallback(
+    (response: FormatWorkerResponse) => {
+      const label = response.mode.toUpperCase();
+      if (response.ok && response.action === 'format') {
+        setEditorTextState(response.text);
+        setSurfaceNote(response.truncated ? t('format.previewTruncated', { label }) : t('format.editable', { label }));
+        updateStatus(response.truncated ? t('format.generatedTruncated', { label }) : t('format.generated', { label }), response.truncated ? 'warn' : 'ok');
+      } else if (response.ok && response.action === 'parse') {
+        const plainValue = response.plainValue as JsonValue;
+        setCurrentValueState(response.value);
+        setParsedJson(plainValue);
+        setParseError(null);
+        setStats(collectStats(response.value));
+        setSearchState({ kind: 'idle' });
+        setSurfaceNote(t('format.editable', { label }));
+        updateStatus(t('format.parsed', { label }), 'ok');
+      } else if (!response.ok && response.action === 'format') {
+        setEditorTextState(t('format.previewUnavailableText', { label, message: response.error }));
+        setSurfaceNote(t('format.previewUnavailable', { label }));
+        updateStatus(t('format.previewFailed', { label, message: response.error }), 'error');
+      } else if (!response.ok && response.action === 'parse') {
+        const message = t('format.parseFailed', { label, message: response.error });
+        setCurrentValueState(null);
+        setParseError(message);
+        setSearchState({ kind: 'message', message });
+        setSurfaceNote(message);
+        updateStatus(message, 'error');
+      }
     },
-    [terminateFormatWorker],
+    [setCurrentValueState, t, updateStatus],
   );
 
-  const invalidateFormatWork = useCallback(() => {
-    formatRequestId.current += 1;
-    terminateFormatWorker();
-  }, [terminateFormatWorker]);
-
   const handleFormatWorkerFailure = useCallback(
-    (message: string) => {
-      const request = activeFormatRequest.current;
-      terminateFormatWorker();
+    (message: string, request: ActiveFormatRequest | null) => {
       if (!request) {
         updateStatus(message, 'error');
         return;
@@ -325,31 +250,26 @@ export function App() {
         updateStatus(parseMessage, 'error');
       }
     },
-    [t, terminateFormatWorker, updateStatus],
+    [t, updateStatus],
   );
 
-  const scheduleFormatWorkerTimeout = useCallback(
-    (requestId: number, mode: ViewMode, action: 'format' | 'parse') => {
-      clearFormatTimeout();
-      formatTimeout.current = window.setTimeout(() => {
-        const currentRequest = activeFormatRequest.current;
-        if (
-          !currentRequest ||
-          currentRequest.id !== requestId ||
-          currentRequest.mode !== mode ||
-          currentRequest.action !== action ||
-          requestId !== formatRequestId.current ||
-          mode !== viewModeRef.current
-        ) {
-          return;
-        }
+  const {
+    beginFormatWorkerRequest,
+    invalidateFormatWork,
+    postFormatWorkerMessage,
+    scheduleFormatWorkerTimeout,
+  } = useFormatWorkerClient({
+    t,
+    viewModeRef,
+    timeoutMs: FORMAT_WORKER_TIMEOUT_MS,
+    onResponse: handleFormatWorkerResponse,
+    onFailure: handleFormatWorkerFailure,
+  });
 
-        const label = mode.toUpperCase();
-        handleFormatWorkerFailure(t(action === 'format' ? 'format.formatTimeout' : 'format.parseTimeout', { label }));
-      }, FORMAT_WORKER_TIMEOUT_MS);
-    },
-    [clearFormatTimeout, handleFormatWorkerFailure, t],
-  );
+  const { runByteTransformInWorker } = useByteTransformWorker({
+    t,
+    onError: (message) => updateStatus(message, 'error'),
+  });
 
   const clearPendingWork = useCallback(() => {
     clearParseTimer();
@@ -360,74 +280,6 @@ export function App() {
     activeSearchId.current += 1;
     invalidateFormatWork();
   }, [clearParseTimer, invalidateFormatWork]);
-
-  const terminateByteTransformWorker = useCallback(() => {
-    byteTransformRequestId.current += 1;
-    for (const pending of byteTransformPromises.current.values()) {
-      pending.reject(new Error(t('status.byteTransformCancelled')));
-    }
-    byteTransformPromises.current.clear();
-    if (byteTransformWorker.current) {
-      byteTransformWorker.current.terminate();
-      byteTransformWorker.current = null;
-    }
-  }, [t]);
-
-  const getByteTransformWorker = useCallback(() => {
-    if (!byteTransformWorker.current) {
-      byteTransformWorker.current = new Worker(new URL('./byte-transform-worker.ts', import.meta.url), { type: 'module' });
-      byteTransformWorker.current.addEventListener('message', (event: MessageEvent<ByteTransformWorkerResponse>) => {
-        const response = event.data;
-        const pending = byteTransformPromises.current.get(response.id);
-        if (pending) {
-          byteTransformPromises.current.delete(response.id);
-          if (response.ok) {
-            pending.resolve(response.bytes);
-          } else {
-            pending.reject(new Error(response.error));
-          }
-        }
-      });
-      byteTransformWorker.current.addEventListener('error', (event) => {
-        event.preventDefault();
-        const message = event instanceof ErrorEvent && event.message ? event.message : t('status.hexWorkerError');
-        for (const pending of byteTransformPromises.current.values()) {
-          pending.reject(new Error(message));
-        }
-        byteTransformPromises.current.clear();
-        updateStatus(message, 'error');
-      });
-      byteTransformWorker.current.addEventListener('messageerror', () => {
-        const message = t('status.hexWorkerUnreadable');
-        for (const pending of byteTransformPromises.current.values()) {
-          pending.reject(new Error(message));
-        }
-        byteTransformPromises.current.clear();
-        updateStatus(message, 'error');
-      });
-    }
-    return byteTransformWorker.current;
-  }, [t, updateStatus]);
-
-  const runByteTransformInWorker = useCallback(
-    (payload: ByteTransformWorkerPayload) => {
-      terminateByteTransformWorker();
-      const requestId = byteTransformRequestId.current + 1;
-      byteTransformRequestId.current = requestId;
-      const request = { id: requestId, ...payload } satisfies ByteTransformWorkerRequest;
-      const transfer: Transferable[] | null = payload.kind === 'bytes' ? [payload.bytes.buffer as ArrayBuffer] : null;
-      return new Promise<Uint8Array>((resolve, reject) => {
-        byteTransformPromises.current.set(requestId, { resolve, reject });
-        const worker = getByteTransformWorker();
-        if (transfer) {
-          worker.postMessage(request, transfer);
-        } else {
-          worker.postMessage(request);
-        }
-      });
-    },
-    [getByteTransformWorker, terminateByteTransformWorker],
-  );
 
   const snapshotActiveTab = useCallback(
     (): EditorTab | null => {
@@ -647,57 +499,6 @@ export function App() {
     [clearParseTimer, setCurrentValueState, t, updateStatus, wasmReady],
   );
 
-	  const getFormatWorker = useCallback(() => {
-	    if (!formatWorker.current) {
-	      formatWorker.current = new Worker(new URL('./format-worker.ts', import.meta.url), { type: 'module' });
-	      formatWorker.current.addEventListener('message', (event: MessageEvent<FormatWorkerResponse>) => {
-	        const response = event.data;
-	        if (response.id !== formatRequestId.current || response.mode !== viewModeRef.current) {
-	          return;
-	        }
-
-	        clearFormatTimeout();
-	        activeFormatRequest.current = null;
-	
-	        const label = response.mode.toUpperCase();
-	        if (response.ok && response.action === 'format') {
-	          setEditorTextState(response.text);
-	          setSurfaceNote(response.truncated ? t('format.previewTruncated', { label }) : t('format.editable', { label }));
-	          updateStatus(response.truncated ? t('format.generatedTruncated', { label }) : t('format.generated', { label }), response.truncated ? 'warn' : 'ok');
-	        } else if (response.ok && response.action === 'parse') {
-          const plainValue = response.plainValue as JsonValue;
-          setCurrentValueState(response.value);
-          setParsedJson(plainValue);
-          setParseError(null);
-          setStats(collectStats(response.value));
-          setSearchState({ kind: 'idle' });
-          setSurfaceNote(t('format.editable', { label }));
-          updateStatus(t('format.parsed', { label }), 'ok');
-        } else if (!response.ok && response.action === 'format') {
-          setEditorTextState(t('format.previewUnavailableText', { label, message: response.error }));
-          setSurfaceNote(t('format.previewUnavailable', { label }));
-          updateStatus(t('format.previewFailed', { label, message: response.error }), 'error');
-        } else if (!response.ok && response.action === 'parse') {
-          const message = t('format.parseFailed', { label, message: response.error });
-          setCurrentValueState(null);
-          setParseError(message);
-          setSearchState({ kind: 'message', message });
-          setSurfaceNote(message);
-	          updateStatus(message, 'error');
-	        }
-	      });
-	      formatWorker.current.addEventListener('error', (event) => {
-	        event.preventDefault();
-	        handleFormatWorkerFailure(event instanceof ErrorEvent && event.message ? event.message : t('status.formatWorkerError'));
-	      });
-	      formatWorker.current.addEventListener('messageerror', () => {
-	        handleFormatWorkerFailure(t('status.formatWorkerUnreadable'));
-	      });
-	    }
-	
-	    return formatWorker.current;
-	  }, [clearFormatTimeout, handleFormatWorkerFailure, setCurrentValueState, t, updateStatus]);
-
 	  const renderTextForValue = useCallback(
 	    (value: RtonValue, mode: ViewMode) => {
 	      const requestId = beginFormatWorkerRequest('format', mode);
@@ -705,7 +506,7 @@ export function App() {
 	      setSurfaceNote(t('format.generatingPreview', { label }));
 	      setEditorTextState(t('format.generatingPreviewText', { label }));
 	      scheduleFormatWorkerTimeout(requestId, mode, 'format');
-	      getFormatWorker().postMessage({
+	      postFormatWorkerMessage({
 	        action: 'format',
 	        id: requestId,
         value,
@@ -713,7 +514,7 @@ export function App() {
 	      });
 	      return true;
 	    },
-	    [beginFormatWorkerRequest, getFormatWorker, scheduleFormatWorkerTimeout, t],
+	    [beginFormatWorkerRequest, postFormatWorkerMessage, scheduleFormatWorkerTimeout, t],
 	  );
 	
 	  const renderAlternateFormat = useCallback(
@@ -739,14 +540,14 @@ export function App() {
 	      const requestId = beginFormatWorkerRequest('format', mode);
 	      setEditorTextState(t('format.generatingPreviewText', { label }));
 	      scheduleFormatWorkerTimeout(requestId, mode, 'format');
-	      getFormatWorker().postMessage({
+	      postFormatWorkerMessage({
 	        action: 'format',
 	        id: requestId,
         value,
         mode,
 	      });
 	    },
-	    [beginFormatWorkerRequest, getFormatWorker, invalidateFormatWork, parseError, scheduleFormatWorkerTimeout, t],
+	    [beginFormatWorkerRequest, invalidateFormatWork, parseError, postFormatWorkerMessage, scheduleFormatWorkerTimeout, t],
 	  );
 	
 	  const parseAlternateFormat = useCallback(
@@ -756,14 +557,14 @@ export function App() {
 	      const label = mode.toUpperCase();
 	      setSurfaceNote(t('format.parsing', { label }));
 	      scheduleFormatWorkerTimeout(requestId, mode, 'parse');
-	      getFormatWorker().postMessage({
+	      postFormatWorkerMessage({
 	        action: 'parse',
 	        id: requestId,
         mode,
 	        text,
 	      });
 	    },
-	    [beginFormatWorkerRequest, clearParseTimer, getFormatWorker, scheduleFormatWorkerTimeout, t],
+	    [beginFormatWorkerRequest, clearParseTimer, postFormatWorkerMessage, scheduleFormatWorkerTimeout, t],
 	  );
 
   const scheduleEditorParse = useCallback(
@@ -957,7 +758,6 @@ export function App() {
       if (searchTimer.current !== null) {
         window.clearTimeout(searchTimer.current);
       }
-      formatWorker.current?.terminate();
     };
   }, [t, updateStatus]);
 
@@ -1032,8 +832,6 @@ export function App() {
     '--rton-left-panel-width': `${leftPanelWidth}px`,
     '--rton-right-panel-width': `${rightPanelWidth}px`,
   } as CSSProperties;
-
-  useEffect(() => terminateByteTransformWorker, [terminateByteTransformWorker]);
 
   const resizePanel = useCallback((side: PanelSide, width: number) => {
     const clamped = clampPanelWidth(width);
