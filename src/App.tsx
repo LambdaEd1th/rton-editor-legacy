@@ -99,6 +99,12 @@ import {
   filterLoadedFileItems,
   type LoadedRtonFile,
 } from './loaded-file-items';
+import {
+  clampPanelWidth,
+  LEFT_PANEL_DEFAULT_WIDTH,
+  RIGHT_PANEL_DEFAULT_WIDTH,
+} from './panel-layout';
+import { buttonClass, cx, modeButtonClass } from './ui-classes';
 
 type FormatWorkerResponse =
   | {
@@ -168,12 +174,6 @@ type ByteTransformWorkerPayload =
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
 const FORMAT_WORKER_TIMEOUT_MS = 20_000;
-const LEFT_PANEL_DEFAULT_WIDTH = 300;
-const RIGHT_PANEL_DEFAULT_WIDTH = 380;
-const PANEL_MIN_WIDTH = 220;
-const PANEL_MAX_WIDTH = 560;
-const buttonBase =
-  'inline-flex h-7 min-w-0 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded border px-2.5 text-[13px] leading-none transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45';
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   applyThemePreference(readThemePreference());
@@ -2080,10 +2080,6 @@ export function App() {
   );
 }
 
-function clampPanelWidth(width: number) {
-  return Math.round(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, width)));
-}
-
 async function resolveBatchItemValue(
   item: LoadedFileTreeItem,
   context: {
@@ -2141,27 +2137,4 @@ function errorMessage(error: unknown) {
 
 function isDirectoryPickerGestureError(error: unknown) {
   return errorMessage(error).toLowerCase().includes('user gesture');
-}
-
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(' ');
-}
-
-function buttonClass(variant: 'primary' | 'secondary', icon = false) {
-  return cx(
-    buttonBase,
-    variant === 'primary' && 'border-[var(--color-accent-border)] bg-[var(--color-accent)] font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-strong)]',
-    variant === 'secondary' && 'border-[var(--color-border-strong)] bg-[var(--color-control)] text-[var(--color-text-strong)] hover:border-[var(--color-border-stronger)] hover:bg-[var(--color-control-hover)]',
-    icon && 'w-7 px-0',
-    '[&>svg]:h-4 [&>svg]:w-4',
-  );
-}
-
-function modeButtonClass(active: boolean) {
-  return cx(
-    'inline-flex h-7 min-w-14 items-center justify-center rounded border px-2 text-[13px] font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none',
-    active
-      ? 'border-[var(--color-accent-border)] bg-[var(--color-control-active)] text-[var(--color-accent-text)]'
-      : 'border-[var(--color-border-strong)] bg-[var(--color-control)] text-[var(--color-text)] hover:bg-[var(--color-control-hover)]',
-  );
 }
