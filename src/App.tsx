@@ -6,19 +6,10 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
-import {
-  CheckCircle2,
-  Download,
-  FileJson,
-  FileText,
-  FileUp,
-  FolderOpen,
-  Redo2,
-  Undo2,
-} from 'lucide-react';
+import { FolderOpen } from 'lucide-react';
 import init from './wasm/rton-editor/rton_editor_wasm';
 import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
-import { DraggableToolbar, type ToolbarGroupConfig, type ToolbarGroupId } from './components/DraggableToolbar';
+import { AppToolbar } from './components/AppToolbar';
 import { EditorTabStrip, type TabDropPlacement } from './components/EditorTabStrip';
 import { HexEditor, type HexEditorJumpTarget } from './components/HexEditor';
 import { AppStatusBar } from './components/AppStatusBar';
@@ -33,7 +24,7 @@ import {
 import { sampleJson } from './sample';
 import { locateRtonValueOffset } from './rton-offset-map';
 import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
-import { RtonInlineSelect, type RtonInlineSelectOption } from './components/RtonInlineSelect';
+import type { RtonInlineSelectOption } from './components/RtonInlineSelect';
 import {
   replaceRtonValueAtPath,
   type RtonValuePath,
@@ -46,7 +37,6 @@ import {
   collectDroppedEntries,
   collectLoadableCandidates,
   displayFilePath,
-  LOADABLE_FILE_ACCEPT,
   LOADABLE_FILE_HINT,
   normalizeDisplayPath,
   type DirectoryPickerWindow,
@@ -112,7 +102,7 @@ import {
   LEFT_PANEL_DEFAULT_WIDTH,
   RIGHT_PANEL_DEFAULT_WIDTH,
 } from './panel-layout';
-import { buttonClass, cx, modeButtonClass } from './ui-classes';
+import { cx } from './ui-classes';
 import {
   useByteTransformWorker,
   useFormatWorkerClient,
@@ -163,7 +153,6 @@ export function App() {
   const [lineWrapping, setLineWrapping] = useState(() => readLineWrappingPreference());
   const [editorSearchPanelVisible, setEditorSearchPanelVisible] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const nextTabId = useRef(1);
   const nextLoadedFileId = useRef(1);
   const nextEditorJumpId = useRef(1);
@@ -1402,240 +1391,48 @@ export function App() {
     [hasActiveFile],
   );
 
-  const toolbarGroups = {
-    file: {
-      label: t('toolbar.file'),
-      content: (
-        <>
-          <button type="button" onClick={() => fileInputRef.current?.click()} className={buttonClass('primary')}>
-            <FileUp />
-            {t('toolbar.openFile')}
-          </button>
-          <button type="button" onClick={() => void loadRtonFolder()} className={buttonClass('secondary')}>
-            <FolderOpen />
-            {t('toolbar.openFolder')}
-          </button>
-          <button type="button" onClick={loadSample} className={buttonClass('secondary')}>
-            {t('toolbar.sample')}
-          </button>
-          <span className="min-w-24 max-w-80 flex-1 truncate px-1 font-semibold text-[var(--color-text-strong)]">{displayFileName}</span>
-        </>
-      ),
-    },
-    edit: {
-      label: t('toolbar.edit'),
-      ariaLabel: t('toolbar.edit'),
-      content: (
-        <>
-          <button
-            type="button"
-            onClick={() => runEditorToolbarAction('undo')}
-            disabled={!hasActiveFile}
-            className={buttonClass('secondary')}
-          >
-            <Undo2 />
-            {t('toolbar.undo')}
-          </button>
-          <button
-            type="button"
-            onClick={() => runEditorToolbarAction('redo')}
-            disabled={!hasActiveFile}
-            className={buttonClass('secondary')}
-          >
-            <Redo2 />
-            {t('toolbar.redo')}
-          </button>
-        </>
-      ),
-    },
-    format: {
-      label: t('toolbar.textFormat'),
-      role: 'tablist',
-      ariaLabel: t('toolbar.textFormat'),
-      content: (
-        <>
-          <button
-            type="button"
-            role="tab"
-            disabled={!hasActiveFile || (!binaryBytes && !currentValue)}
-            aria-selected={editorSurface === 'hex'}
-            className={modeButtonClass(editorSurface === 'hex')}
-            onClick={openHexEditor}
-          >
-            RTON
-          </button>
-          {(['json', 'yaml', 'toml'] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              role="tab"
-              disabled={!hasActiveFile}
-              aria-selected={editorSurface === 'text' && viewMode === mode}
-              className={modeButtonClass(editorSurface === 'text' && viewMode === mode)}
-              onClick={() => setViewMode(mode)}
-            >
-              {mode.toUpperCase()}
-            </button>
-          ))}
-          <span className="max-w-52 truncate px-1 text-xs uppercase text-[var(--color-text-muted)] max-lg:hidden">{displaySurfaceNote}</span>
-        </>
-      ),
-    },
-    textExport: {
-      label: t('toolbar.textExport'),
-      ariaLabel: t('toolbar.textExport'),
-      content: (
-        <>
-          <button
-            type="button"
-            onClick={downloadJson}
-            disabled={!hasActiveFile}
-            className={buttonClass('secondary')}
-          >
-            <FileJson />
-            JSON
-          </button>
-          <button
-            type="button"
-            onClick={() => void downloadStructuredFormat('yaml')}
-            disabled={!hasActiveFile}
-            className={buttonClass('secondary')}
-          >
-            <FileText />
-            YAML
-          </button>
-          <button
-            type="button"
-            onClick={() => void downloadStructuredFormat('toml')}
-            disabled={!hasActiveFile}
-            className={buttonClass('secondary')}
-          >
-            <FileText />
-            TOML
-          </button>
-        </>
-      ),
-    },
-    rtonExport: {
-      label: t('toolbar.rtonExport'),
-      ariaLabel: t('toolbar.rtonExport'),
-      content: (
-        <>
-          <label className="rton-switch">
-            <input
-              type="checkbox"
-              checked={compactOutput}
-              disabled={!hasActiveFile}
-              className="rton-switch-input"
-              onChange={(event) => {
-                const nextCompact = event.currentTarget.checked;
-                setCompactOutput(nextCompact);
-                refreshOutputBytesForOptions();
-              }}
-            />
-            <span className="rton-switch-label">{t('toolbar.compact')}</span>
-            <span className="rton-switch-track" aria-hidden="true" />
-          </label>
-          <label className="rton-switch">
-            <input
-              type="checkbox"
-              checked={encryptOutput}
-              disabled={!hasActiveFile}
-              className="rton-switch-input"
-              onChange={(event) => {
-                const nextEncrypt = event.currentTarget.checked;
-                setEncryptOutput(nextEncrypt);
-                refreshOutputBytesForOptions();
-              }}
-            />
-            <span className="rton-switch-label">{t('toolbar.encrypted')}</span>
-            <span className="rton-switch-track" aria-hidden="true" />
-          </label>
-	          <button type="button" onClick={validateValue} disabled={!hasActiveFile || !wasmReady} className={buttonClass('secondary')}>
-            <CheckCircle2 />
-            {t('toolbar.validate')}
-          </button>
-          <button type="button" onClick={() => void downloadRton()} disabled={!hasActiveFile || !wasmReady} className={buttonClass('primary')}>
-            <Download />
-            RTON
-          </button>
-        </>
-      ),
-    },
-    prefs: {
-      label: t('toolbar.preferences'),
-      ariaLabel: t('toolbar.preferences'),
-      content: (
-        <>
-          <label className="rton-theme-label">
-            <span>{t('toolbar.theme')}</span>
-            <RtonInlineSelect
-              value={themePreference}
-              options={themeOptions}
-              ariaLabel={t('toolbar.chooseTheme')}
-              variant="toolbar"
-              className="rton-theme-select"
-              onChange={setThemePreference}
-            />
-          </label>
-          <label className="rton-theme-label">
-            <span>{t('toolbar.language')}</span>
-            <RtonInlineSelect
-              value={lang}
-              options={languageOptions}
-              ariaLabel={t('toolbar.chooseLanguage')}
-              variant="toolbar"
-              className="rton-theme-select"
-              onChange={setLang}
-            />
-          </label>
-          <label className="rton-switch">
-            <input
-              type="checkbox"
-              checked={lineWrapping}
-              className="rton-switch-input"
-              aria-label={t('toolbar.lineWrap')}
-              onChange={(event) => setLineWrapping(event.currentTarget.checked)}
-            />
-            <span className="rton-switch-label">{t('toolbar.lineWrap')}</span>
-            <span className="rton-switch-track" aria-hidden="true" />
-          </label>
-          <label className="rton-switch">
-            <input
-              type="checkbox"
-              checked={hasActiveFile && editorSearchPanelVisible}
-              disabled={!hasActiveFile}
-              className="rton-switch-input"
-              aria-label={t('toolbar.searchPanel')}
-              onChange={(event) => setEditorSearchPanelVisible(event.currentTarget.checked)}
-            />
-            <span className="rton-switch-label">{t('toolbar.searchPanel')}</span>
-            <span className="rton-switch-track" aria-hidden="true" />
-          </label>
-        </>
-      ),
-    },
-  } satisfies Record<ToolbarGroupId, ToolbarGroupConfig>;
-
   return (
     <main className="flex h-screen min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]">
-      <header className="rton-toolbar">
-        <DraggableToolbar groups={toolbarGroups} />
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={LOADABLE_FILE_ACCEPT}
-            className="hidden"
-            onChange={(event) => {
-              const files = Array.from(event.currentTarget.files ?? []);
-              if (files.length > 0) {
-                void loadRtonFiles(files);
-              }
-              event.currentTarget.value = '';
-            }}
-          />
-      </header>
+      <AppToolbar
+        t={t}
+        canOpenHexEditor={hasActiveFile && Boolean(binaryBytes || currentValue)}
+        compactOutput={compactOutput}
+        displayFileName={displayFileName}
+        displaySurfaceNote={displaySurfaceNote}
+        editorSearchPanelVisible={editorSearchPanelVisible}
+        editorSurface={editorSurface}
+        encryptOutput={encryptOutput}
+        hasActiveFile={hasActiveFile}
+        lang={lang}
+        languageOptions={languageOptions}
+        lineWrapping={lineWrapping}
+        themeOptions={themeOptions}
+        themePreference={themePreference}
+        viewMode={viewMode}
+        wasmReady={wasmReady}
+        onCompactOutputChange={(checked) => {
+          setCompactOutput(checked);
+          refreshOutputBytesForOptions();
+        }}
+        onDownloadJson={downloadJson}
+        onDownloadRton={downloadRton}
+        onDownloadStructuredFormat={downloadStructuredFormat}
+        onEditorAction={runEditorToolbarAction}
+        onEditorSearchPanelVisibleChange={setEditorSearchPanelVisible}
+        onEncryptOutputChange={(checked) => {
+          setEncryptOutput(checked);
+          refreshOutputBytesForOptions();
+        }}
+        onLanguageChange={setLang}
+        onLineWrappingChange={setLineWrapping}
+        onLoadSample={loadSample}
+        onOpenFiles={loadRtonFiles}
+        onOpenFolder={loadRtonFolder}
+        onOpenHexEditor={openHexEditor}
+        onThemePreferenceChange={setThemePreference}
+        onValidate={validateValue}
+        onViewModeChange={setViewMode}
+      />
 
       <div
         className={cx('rton-workspace-shell', dragging && 'outline outline-2 -outline-offset-2 outline-[var(--color-accent-border)]')}
