@@ -8,19 +8,15 @@ import {
 } from 'react';
 import init from './wasm/rton-editor/rton_editor_wasm';
 import { AppToolbar } from './components/AppToolbar';
-import type { EditorJumpTarget } from './components/CodeEditor';
 import { EditorStage } from './components/EditorStage';
 import { EditorTabStrip, type TabDropPlacement } from './components/EditorTabStrip';
-import type { HexEditorJumpTarget } from './components/HexEditor';
 import { AppStatusBar } from './components/AppStatusBar';
 import { FileListPanel } from './components/FileListPanel';
 import { RightInspectorPanel } from './components/RightInspectorPanel';
 import { PanelResizeHandle, type PanelSide } from './components/Panels';
 import { useI18n } from './localization/use-i18n';
 import { useHexEditActions } from './hex-edit-actions';
-import {
-  type RtonValue,
-} from './rton-value';
+import { useActiveEditorState } from './active-editor-state';
 import { sampleJson } from './sample';
 import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
 import type { RtonInlineSelectOption } from './components/RtonInlineSelect';
@@ -39,12 +35,8 @@ import { useExportActions } from './export-actions';
 import {
   parseJsonTextToRtonValue,
   rtonValueToJsonText,
-  type EditorSurface,
-  type JsonValue,
   type RtonBinaryEncoding,
   type StatusState,
-  type Tone,
-  type ViewMode,
 } from './rton-codec';
 import { createEditorTabFromValue, type EditorTab } from './editor-tabs';
 import {
@@ -91,24 +83,6 @@ export function App() {
   const [loadedFiles, setLoadedFiles] = useState<LoadedRtonFile[]>([]);
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const [wasmReady, setWasmReady] = useState(false);
-  const [fileName, setFileName] = useState('');
-  const [sourceBytes, setSourceBytes] = useState<Uint8Array | null>(null);
-  const [binaryBytes, setBinaryBytes] = useState<Uint8Array | null>(null);
-  const [binaryEncoding, setBinaryEncoding] = useState<RtonBinaryEncoding | null>(null);
-  const [currentValue, setCurrentValue] = useState<RtonValue | null>(null);
-  const [editorText, setEditorTextState] = useState('');
-  const [editorJumpTarget, setEditorJumpTarget] = useState<EditorJumpTarget | null>(null);
-  const [hexJumpTarget, setHexJumpTarget] = useState<HexEditorJumpTarget | null>(null);
-  const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
-  const [compactOutput, setCompactOutput] = useState(false);
-  const [encryptOutput, setEncryptOutput] = useState(false);
-  const [parsedJson, setParsedJson] = useState<JsonValue | null>(null);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [stats, setStats] = useState(() => emptyStats());
-  const [viewMode, setViewModeState] = useState<ViewMode>('json');
-  const [editorSurface, setEditorSurface] = useState<EditorSurface>('text');
-  const [surfaceNote, setSurfaceNote] = useState(() => t('app.waitingFile'));
-  const [status, setStatus] = useState<StatusState>(() => ({ message: t('status.wasmInitializing'), tone: 'warn' }));
   const [dragging, setDragging] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
@@ -120,8 +94,47 @@ export function App() {
   const nextLoadedFileId = useRef(1);
   const nextEditorJumpId = useRef(1);
   const nextHexJumpId = useRef(1);
-  const currentValueRef = useRef<RtonValue | null>(currentValue);
-  const viewModeRef = useRef<ViewMode>(viewMode);
+  const {
+    binaryBytes,
+    binaryEncoding,
+    compactOutput,
+    currentValue,
+    currentValueRef,
+    editorJumpTarget,
+    editorSurface,
+    editorText,
+    encryptOutput,
+    fileName,
+    hexJumpTarget,
+    lastOutputBytes,
+    parseError,
+    parsedJson,
+    setBinaryBytes,
+    setBinaryEncoding,
+    setCompactOutput,
+    setCurrentValueState,
+    setEditorJumpTarget,
+    setEditorSurface,
+    setEditorTextState,
+    setEncryptOutput,
+    setFileName,
+    setHexJumpTarget,
+    setLastOutputBytes,
+    setParseError,
+    setParsedJson,
+    setSourceBytes,
+    setStats,
+    setStatus,
+    setSurfaceNote,
+    setViewModeState,
+    sourceBytes,
+    stats,
+    status,
+    surfaceNote,
+    updateStatus,
+    viewMode,
+    viewModeRef,
+  } = useActiveEditorState({ activeTabId, t });
   const {
     cancelSearch,
     searchQuery,
@@ -147,15 +160,6 @@ export function App() {
     () => langs.map((value) => ({ value, label: getLangLabel(value) })),
     [getLangLabel, lang, langs],
   );
-
-  const setCurrentValueState = useCallback((value: RtonValue | null) => {
-    currentValueRef.current = value;
-    setCurrentValue(value);
-  }, []);
-
-  const updateStatus = useCallback((message: string, tone: Tone = 'warn') => {
-    setStatus({ message, tone });
-  }, []);
 
   const { runByteTransformInWorker } = useByteTransformWorker({
     t,
@@ -452,10 +456,6 @@ export function App() {
   });
 
   useEffect(() => {
-    viewModeRef.current = viewMode;
-  }, [viewMode]);
-
-  useEffect(() => {
     applyThemePreference(themePreference);
     saveThemePreference(themePreference);
 
@@ -473,31 +473,6 @@ export function App() {
   useEffect(() => {
     saveLineWrappingPreference(lineWrapping);
   }, [lineWrapping]);
-
-  useEffect(() => {
-    if (editorSurface === 'hex' && !binaryBytes) {
-      setEditorSurface('text');
-    }
-  }, [binaryBytes, editorSurface]);
-
-  useEffect(() => {
-    currentValueRef.current = currentValue;
-  }, [currentValue]);
-
-  useEffect(() => {
-    if (activeTabId === null) {
-      setCompactOutput(false);
-      setEncryptOutput(false);
-      return;
-    }
-	    if (binaryEncoding) {
-	      setCompactOutput(binaryEncoding.compact);
-	      setEncryptOutput(binaryEncoding.encrypted);
-	      return;
-	    }
-	    setCompactOutput(false);
-	    setEncryptOutput(false);
-	  }, [activeTabId, binaryEncoding]);
 
   useEffect(() => {
     void init()
