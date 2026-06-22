@@ -24,6 +24,7 @@ import { sampleJson } from './sample';
 import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
 import type { RtonInlineSelectOption } from './components/RtonInlineSelect';
 import { collectStats, emptyStats } from './rton-value-analysis';
+import { useTextFormatFlow } from './text-format-flow';
 import { useRtonValueActions } from './rton-value-actions';
 import { useRtonValueSearch } from './rton-value-search';
 import {
@@ -76,9 +77,6 @@ import {
 import { cx } from './ui-classes';
 import {
   useByteTransformWorker,
-  useFormatWorkerClient,
-  type ActiveFormatRequest,
-  type FormatWorkerResponse,
 } from './worker-clients';
 
 const SEARCH_DEBOUNCE_MS = 140;
@@ -126,7 +124,6 @@ export function App() {
   const nextHexJumpId = useRef(1);
   const currentValueRef = useRef<RtonValue | null>(currentValue);
   const viewModeRef = useRef<ViewMode>(viewMode);
-  const parseTimer = useRef<number | null>(null);
   const {
     cancelSearch,
     searchQuery,
@@ -162,84 +159,39 @@ export function App() {
     setStatus({ message, tone });
   }, []);
 
-  const clearParseTimer = useCallback(() => {
-    if (parseTimer.current !== null) {
-      window.clearTimeout(parseTimer.current);
-      parseTimer.current = null;
-    }
-  }, []);
-
-  const handleFormatWorkerResponse = useCallback(
-    (response: FormatWorkerResponse) => {
-      const label = response.mode.toUpperCase();
-      if (response.ok && response.action === 'format') {
-        setEditorTextState(response.text);
-        setSurfaceNote(response.truncated ? t('format.previewTruncated', { label }) : t('format.editable', { label }));
-        updateStatus(response.truncated ? t('format.generatedTruncated', { label }) : t('format.generated', { label }), response.truncated ? 'warn' : 'ok');
-      } else if (response.ok && response.action === 'parse') {
-        const plainValue = response.plainValue as JsonValue;
-        setCurrentValueState(response.value);
-        setParsedJson(plainValue);
-        setParseError(null);
-        setStats(collectStats(response.value));
-        setSearchState({ kind: 'idle' });
-        setSurfaceNote(t('format.editable', { label }));
-        updateStatus(t('format.parsed', { label }), 'ok');
-      } else if (!response.ok && response.action === 'format') {
-        setEditorTextState(t('format.previewUnavailableText', { label, message: response.error }));
-        setSurfaceNote(t('format.previewUnavailable', { label }));
-        updateStatus(t('format.previewFailed', { label, message: response.error }), 'error');
-      } else if (!response.ok && response.action === 'parse') {
-        const message = t('format.parseFailed', { label, message: response.error });
-        setCurrentValueState(null);
-        setParseError(message);
-        setSearchState({ kind: 'message', message });
-        setSurfaceNote(message);
-        updateStatus(message, 'error');
-      }
-    },
-    [setCurrentValueState, t, updateStatus],
-  );
-
-  const handleFormatWorkerFailure = useCallback(
-    (message: string, request: ActiveFormatRequest | null) => {
-      if (!request) {
-        updateStatus(message, 'error');
-        return;
-      }
-
-      const label = request.mode.toUpperCase();
-      if (request.action === 'format') {
-        setEditorTextState(t('format.previewUnavailableText', { label, message }));
-        setSurfaceNote(t('format.previewUnavailable', { label }));
-        updateStatus(t('format.previewFailed', { label, message }), 'error');
-      } else {
-        const parseMessage = t('format.parseFailed', { label, message });
-        setParseError(parseMessage);
-        setSearchState({ kind: 'message', message: parseMessage });
-        setSurfaceNote(parseMessage);
-        updateStatus(parseMessage, 'error');
-      }
-    },
-    [t, updateStatus],
-  );
-
-  const {
-    beginFormatWorkerRequest,
-    invalidateFormatWork,
-    postFormatWorkerMessage,
-    scheduleFormatWorkerTimeout,
-  } = useFormatWorkerClient({
-    t,
-    viewModeRef,
-    timeoutMs: FORMAT_WORKER_TIMEOUT_MS,
-    onResponse: handleFormatWorkerResponse,
-    onFailure: handleFormatWorkerFailure,
-  });
-
   const { runByteTransformInWorker } = useByteTransformWorker({
     t,
     onError: (message) => updateStatus(message, 'error'),
+  });
+
+  const {
+    clearParseTimer,
+    invalidateFormatWork,
+    renderTextForValue,
+    scheduleEditorParse,
+    setViewMode,
+  } = useTextFormatFlow({
+    activeTabId,
+    cancelSearch,
+    currentValueRef,
+    debounceMs: EDITOR_PARSE_DEBOUNCE_MS,
+    editorSurface,
+    parseError,
+    setCurrentValueState,
+    setEditorSurface,
+    setEditorTextState,
+    setLastOutputBytes,
+    setParseError,
+    setParsedJson,
+    setSearchState,
+    setStats,
+    setSurfaceNote,
+    setViewModeState,
+    t,
+    timeoutMs: FORMAT_WORKER_TIMEOUT_MS,
+    updateStatus,
+    viewModeRef,
+    wasmReady,
   });
 
   const clearPendingWork = useCallback(() => {
@@ -422,172 +374,6 @@ export function App() {
     [syncActiveTab, tabs.length],
   );
 
-  const parseJsonText = useCallback(
-    (jsonText: string, options: { updateEditor?: boolean; statusMessage?: string } = {}) => {
-      clearParseTimer();
-      cancelSearch();
-
-      if (!wasmReady) {
-        updateStatus(t('status.wasmStillLoading'), 'warn');
-        return;
-      }
-
-      try {
-        const value = parseJsonTextToRtonValue(jsonText);
-        const plainValue = rtonValueToJsonValue(value);
-        setCurrentValueState(value);
-        setParsedJson(plainValue);
-        setParseError(null);
-        setStats(collectStats(value));
-        if (options.updateEditor || viewModeRef.current === 'json') {
-          setEditorTextState(jsonText);
-          setSurfaceNote(t('format.editable', { label: viewModeRef.current.toUpperCase() }));
-        }
-        if (options.statusMessage) {
-          updateStatus(options.statusMessage, 'ok');
-        }
-      } catch (error) {
-        const message = errorMessage(error);
-        setCurrentValueState(null);
-        setParsedJson(null);
-        setParseError(message);
-        setStats(emptyStats());
-        setSearchState({ kind: 'message', message });
-        updateStatus(message, 'error');
-      }
-    },
-    [cancelSearch, clearParseTimer, setCurrentValueState, t, updateStatus, wasmReady],
-  );
-
-	  const renderTextForValue = useCallback(
-	    (value: RtonValue, mode: ViewMode) => {
-	      const requestId = beginFormatWorkerRequest('format', mode);
-	      const label = mode.toUpperCase();
-	      setSurfaceNote(t('format.generatingPreview', { label }));
-	      setEditorTextState(t('format.generatingPreviewText', { label }));
-	      scheduleFormatWorkerTimeout(requestId, mode, 'format');
-	      postFormatWorkerMessage({
-	        action: 'format',
-	        id: requestId,
-        value,
-        mode,
-	      });
-	      return true;
-	    },
-	    [beginFormatWorkerRequest, postFormatWorkerMessage, scheduleFormatWorkerTimeout, t],
-	  );
-	
-	  const renderAlternateFormat = useCallback(
-	    (mode: Exclude<ViewMode, 'json'>) => {
-	      const label = mode.toUpperCase();
-	      setSurfaceNote(t('format.generatingPreview', { label }));
-	
-	      if (parseError) {
-	        invalidateFormatWork();
-	        setEditorTextState(t('format.unparseablePreview', { label, message: parseError }));
-	        setSurfaceNote(t('format.previewUnavailable', { label }));
-	        return;
-      }
-	
-	      const value = currentValueRef.current;
-	      if (!value) {
-	        invalidateFormatWork();
-	        setEditorTextState(t('format.noValuePreview', { label }));
-	        setSurfaceNote(t('format.previewUnavailable', { label }));
-	        return;
-	      }
-	
-	      const requestId = beginFormatWorkerRequest('format', mode);
-	      setEditorTextState(t('format.generatingPreviewText', { label }));
-	      scheduleFormatWorkerTimeout(requestId, mode, 'format');
-	      postFormatWorkerMessage({
-	        action: 'format',
-	        id: requestId,
-        value,
-        mode,
-	      });
-	    },
-	    [beginFormatWorkerRequest, invalidateFormatWork, parseError, postFormatWorkerMessage, scheduleFormatWorkerTimeout, t],
-	  );
-	
-	  const parseAlternateFormat = useCallback(
-	    (mode: Exclude<ViewMode, 'json'>, text: string) => {
-	      clearParseTimer();
-	      const requestId = beginFormatWorkerRequest('parse', mode);
-	      const label = mode.toUpperCase();
-	      setSurfaceNote(t('format.parsing', { label }));
-	      scheduleFormatWorkerTimeout(requestId, mode, 'parse');
-	      postFormatWorkerMessage({
-	        action: 'parse',
-	        id: requestId,
-        mode,
-	        text,
-	      });
-	    },
-	    [beginFormatWorkerRequest, clearParseTimer, postFormatWorkerMessage, scheduleFormatWorkerTimeout, t],
-	  );
-
-  const scheduleEditorParse = useCallback(
-    (mode: ViewMode, text: string) => {
-      clearParseTimer();
-      cancelSearch();
-      setLastOutputBytes(null);
-      if (mode === 'json') {
-        setSearchState({ kind: 'message', message: t('format.waitJsonParse') });
-        parseTimer.current = window.setTimeout(() => {
-          parseJsonText(text);
-        }, EDITOR_PARSE_DEBOUNCE_MS);
-      } else {
-        const label = mode.toUpperCase();
-        setSearchState({ kind: 'message', message: t('format.waitParse', { label }) });
-        setSurfaceNote(t('format.editing', { label }));
-        parseTimer.current = window.setTimeout(() => {
-          parseAlternateFormat(mode, text);
-        }, EDITOR_PARSE_DEBOUNCE_MS);
-      }
-    },
-    [cancelSearch, clearParseTimer, parseAlternateFormat, parseJsonText, t],
-  );
-
-  const setViewMode = useCallback(
-    (mode: ViewMode) => {
-      if (activeTabId === null) {
-        updateStatus(t('status.openFileFirst'), 'warn');
-        return;
-      }
-
-	      if (mode === viewModeRef.current) {
-	        setEditorSurface('text');
-	        if (editorSurface === 'hex') {
-	          const value = currentValueRef.current;
-	          if (value) {
-	            renderTextForValue(value, mode);
-	          }
-	        }
-	        return;
-	      }
-
-	      viewModeRef.current = mode;
-	      setViewModeState(mode);
-	      setEditorSurface('text');
-	      invalidateFormatWork();
-
-      if (mode === 'json') {
-        const value = currentValueRef.current;
-        if (!value) {
-          updateStatus(parseError ? t('format.jsonCannotConvert', { message: parseError }) : t('status.noSearchableValue'), 'error');
-          setSurfaceNote(t('format.jsonPreviewUnavailable'));
-          return;
-        }
-
-	        renderTextForValue(value, mode);
-	      } else {
-	        renderAlternateFormat(mode);
-	      }
-	    },
-			    [activeTabId, editorSurface, invalidateFormatWork, parseError, renderAlternateFormat, renderTextForValue, t, updateStatus],
-			  );
-
   const hasActiveFile = activeTabId !== null && tabs.length > 0;
   const displayFileName = hasActiveFile ? fileName : t('app.emptyFile');
   const targetBinaryEncoding = useMemo<RtonBinaryEncoding>(
@@ -724,12 +510,6 @@ export function App() {
       .catch((error: unknown) => {
         updateStatus(errorMessage(error), 'error');
       });
-
-    return () => {
-      if (parseTimer.current !== null) {
-        window.clearTimeout(parseTimer.current);
-      }
-    };
   }, [t, updateStatus]);
 
   useEffect(() => {
