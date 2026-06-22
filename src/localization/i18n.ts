@@ -1,4 +1,5 @@
 type MessageDict = Record<string, string>;
+type CodeMirrorPhraseMap = Record<string, string>;
 
 export type I18nParams = Record<string, string | number>;
 export type Translator = (key: string, params?: I18nParams) => string;
@@ -444,6 +445,52 @@ const messages: Record<string, MessageDict> = {
 };
 
 const STORAGE_KEY = 'rton-editor-lang';
+const codeMirrorPhraseMaps: Record<string, CodeMirrorPhraseMap> = {
+  'zh-CN': {
+    Find: '查找',
+    Replace: '替换',
+    next: '下一个',
+    previous: '上一个',
+    all: '全选',
+    'match case': '区分大小写',
+    regexp: '正则',
+    'by word': '整词',
+    replace: '替换',
+    'replace all': '全部替换',
+    close: '关闭',
+    'current match': '当前匹配',
+    'on line': '位于第',
+    'Go to line': '转到行',
+    go: '转到',
+    'replaced match on line $': '已替换第 $ 行的匹配',
+    'replaced $ matches': '已替换 $ 个匹配',
+    'Selection deleted': '已删除选区',
+    'Control character': '控制字符',
+    Completions: '补全',
+  },
+  en: {
+    Find: 'Search',
+    Replace: 'Replace',
+    next: 'Next',
+    previous: 'Previous',
+    all: 'Select all',
+    'match case': 'Match case',
+    regexp: 'Regex',
+    'by word': 'Whole word',
+    replace: 'Replace',
+    'replace all': 'Replace all',
+    close: 'Close',
+    'current match': 'Current match',
+    'on line': 'on line',
+    'Go to line': 'Go to line',
+    go: 'Go',
+    'replaced match on line $': 'Replaced match on line $',
+    'replaced $ matches': 'Replaced $ matches',
+    'Selection deleted': 'Selection deleted',
+    'Control character': 'Control character',
+    Completions: 'Completions',
+  },
+};
 let currentLang = readInitialLang();
 const changeCallbacks: Array<(lang: string) => void> = [];
 
@@ -517,4 +564,8 @@ export function getAvailableLangs(): string[] {
 
 export function getLangLabel(lang: string): string {
   return lang === 'zh-CN' ? t('lang.zhCN') : t('lang.en');
+}
+
+export function getCodeMirrorPhrases(lang: string): CodeMirrorPhraseMap {
+  return codeMirrorPhraseMaps[lang] ?? codeMirrorPhraseMaps.en;
 }
