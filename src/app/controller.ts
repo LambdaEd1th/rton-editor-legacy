@@ -528,7 +528,6 @@ export function useRtonEditorController() {
     clearPendingWork,
     compactOutput,
     currentValueRef,
-    encryptOutput,
     invalidateFormatWork,
     parseError,
     renderTextForValue,

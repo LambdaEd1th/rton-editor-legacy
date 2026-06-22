@@ -115,6 +115,7 @@ export function decodeRtonSourceValue(bytes: Uint8Array, renderJsonPreview = tru
     value: decodeRtonValueWire(wire),
     editorText,
     surfaceNote,
+    plainBytes,
     compact,
     encrypted,
   };
@@ -129,8 +130,8 @@ export async function decodeLoadableSource(
   if (candidate.kind === 'rton') {
     const bytes = new Uint8Array(await candidate.file.arrayBuffer());
     const useHexSurface = preferredEditorSurface === 'hex';
-    const { value, encrypted, compact } = decodeRtonSourceValue(bytes, false, t);
-    const binaryEncoding = { compact, encrypted };
+    const { value, encrypted, compact, plainBytes } = decodeRtonSourceValue(bytes, false, t);
+    const binaryEncoding = { compact, encrypted: false };
     const label = loadableFileKindLabel(preferredViewMode);
     const editorText = useHexSurface ? '' : t('format.generatingPreviewText', { label });
     const textSurfaceNote = useHexSurface ? t('app.notGenerated') : t('format.generatingPreview', { label });
@@ -140,7 +141,7 @@ export async function decodeLoadableSource(
       editorText: useHexSurface ? '' : editorText,
       surfaceNote: useHexSurface ? t('format.rtonEditable') : textSurfaceNote,
       sourceBytes: bytes,
-      binaryBytes: bytes,
+      binaryBytes: plainBytes,
       binaryEncoding,
       viewMode: preferredViewMode,
       editorSurface: useHexSurface ? 'hex' : 'text',

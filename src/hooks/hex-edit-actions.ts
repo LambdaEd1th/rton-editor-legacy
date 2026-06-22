@@ -19,7 +19,6 @@ export function useHexEditActions({
   clearPendingWork,
   compactOutput,
   currentValueRef,
-  encryptOutput,
   invalidateFormatWork,
   parseError,
   renderTextForValue,
@@ -43,7 +42,6 @@ export function useHexEditActions({
   clearPendingWork: () => void;
   compactOutput: boolean;
   currentValueRef: { current: RtonValue | null };
-  encryptOutput: boolean;
   invalidateFormatWork: () => void;
   parseError: string | null;
   renderTextForValue: (value: RtonValue, mode: ViewMode) => boolean;
@@ -81,9 +79,9 @@ export function useHexEditActions({
     }
 
     try {
-      const bytes = encodeRtonOutputBytes(value, compactOutput, encryptOutput);
+      const bytes = encodeRtonOutputBytes(value, compactOutput, false);
       setBinaryBytes(bytes);
-      setBinaryEncoding({ compact: compactOutput, encrypted: encryptOutput });
+      setBinaryEncoding({ compact: compactOutput, encrypted: false });
       setSourceBytes(bytes);
       setLastOutputBytes(null);
       setEditorSurface('hex');
@@ -97,7 +95,6 @@ export function useHexEditActions({
     binaryBytes,
     compactOutput,
     currentValueRef,
-    encryptOutput,
     parseError,
     setBinaryBytes,
     setBinaryEncoding,
@@ -121,12 +118,14 @@ export function useHexEditActions({
       setLastOutputBytes(null);
 
       try {
-        const { value, encrypted, compact } = decodeRtonSourceValue(nextBytes);
+        const { value, encrypted, compact, plainBytes } = decodeRtonSourceValue(nextBytes);
+        setBinaryBytes(plainBytes);
+        setSourceBytes(plainBytes);
         setCurrentValueState(value);
         setParsedJson(rtonValueToJsonValue(value));
         setParseError(null);
         setStats(collectStats(value));
-        setBinaryEncoding({ compact, encrypted });
+        setBinaryEncoding({ compact, encrypted: false });
         setSearchState({ kind: 'idle' });
         renderTextForValue(value, viewModeRef.current);
         setSurfaceNote(t('format.rtonEditable'));
