@@ -46,7 +46,7 @@ import {
   type SearchState,
 } from './rton-value-editing';
 import { locateRtonPathInText } from './rton-text-locator';
-import { collectStats, emptyStats, RTON_SEARCH_MATCH_LIMIT, runChunkedSearch, type Stats } from './rton-value-analysis';
+import { collectStats, emptyStats, RTON_SEARCH_MATCH_LIMIT, runChunkedSearch } from './rton-value-analysis';
 import {
   collectDirectoryEntries,
   collectDroppedEntries,
@@ -76,7 +76,6 @@ import {
   formatRtonEncoding,
   isEncryptedRtonBytes,
   isPendingTextPreview,
-  jsonPreviewUnavailableText,
   parseJsonTextToRtonValue,
   rtonValueToJsonText,
   rtonValueToJsonValue,
@@ -88,28 +87,9 @@ import {
   type Tone,
   type ViewMode,
 } from './rton-codec';
+import { createEditorTabFromValue, type EditorTab } from './editor-tabs';
 
 type ThemePreference = 'system' | 'light' | 'dark';
-
-type EditorTab = {
-  id: number;
-  fileName: string;
-  sourceBytes: Uint8Array | null;
-  binaryBytes: Uint8Array | null;
-  binaryEncoding: RtonBinaryEncoding | null;
-  currentValue: RtonValue | null;
-  editorText: string;
-  lastOutputBytes: number | null;
-  parsedJson: JsonValue | null;
-  parseError: string | null;
-  stats: Stats;
-  viewMode: ViewMode;
-  editorSurface: EditorSurface;
-  surfaceNote: string;
-  searchQuery: string;
-  searchState: SearchState;
-  status: StatusState;
-};
 
 type LoadedRtonFile = {
   id: number;
@@ -2304,87 +2284,4 @@ function modeButtonClass(active: boolean) {
       ? 'border-[var(--color-accent-border)] bg-[var(--color-control-active)] text-[var(--color-accent-text)]'
       : 'border-[var(--color-border-strong)] bg-[var(--color-control)] text-[var(--color-text)] hover:bg-[var(--color-control-hover)]',
   );
-}
-
-function createEditorTabFromValue({
-  id,
-  fileName,
-  value,
-  editorText,
-  surfaceNote,
-	  sourceBytes,
-	  binaryBytes,
-	  binaryEncoding,
-	  viewMode = 'json',
-  editorSurface = 'text',
-  status,
-}: {
-  id: number;
-  fileName: string;
-  value: RtonValue;
-  editorText?: string;
-  surfaceNote?: string;
-	  sourceBytes: Uint8Array | null;
-	  binaryBytes?: Uint8Array | null;
-	  binaryEncoding?: RtonBinaryEncoding | null;
-	  viewMode?: ViewMode;
-  editorSurface?: EditorSurface;
-  status: StatusState;
-}, t: Translator = translate): EditorTab {
-  try {
-	    const plainValue = rtonValueToJsonValue(value);
-	    const actualBinaryBytes = binaryBytes ?? sourceBytes;
-	    let text = editorText;
-    let note = surfaceNote ?? t('format.editable', { label: viewMode.toUpperCase() });
-    if (text === undefined) {
-      try {
-        text = rtonValueToJsonText(value, true);
-      } catch (error) {
-        text = jsonPreviewUnavailableText(errorMessage(error), t);
-        note = t('format.jsonPreviewUnavailable');
-      }
-    }
-
-    return {
-      id,
-	      fileName,
-	      sourceBytes,
-	      binaryBytes: actualBinaryBytes,
-	      binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
-	      currentValue: value,
-      editorText: text,
-      lastOutputBytes: null,
-      parsedJson: plainValue,
-      parseError: null,
-      stats: collectStats(value),
-      viewMode,
-	      editorSurface: editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text',
-      surfaceNote: note,
-      searchQuery: '',
-      searchState: { kind: 'idle' },
-      status,
-    };
-  } catch (error) {
-	    const message = errorMessage(error);
-	    const actualBinaryBytes = binaryBytes ?? sourceBytes;
-	    return {
-      id,
-	      fileName,
-	      sourceBytes,
-	      binaryBytes: actualBinaryBytes,
-	      binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
-	      currentValue: value,
-      editorText: editorText ?? '',
-      lastOutputBytes: null,
-      parsedJson: null,
-      parseError: message,
-      stats: emptyStats(),
-      viewMode,
-	      editorSurface: editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text',
-      surfaceNote: surfaceNote ?? t('format.parseFailed', { label: viewMode.toUpperCase(), message }),
-      searchQuery: '',
-      searchState: { kind: 'message', message },
-      status: { message, tone: 'error' },
-    };
-  }
 }
