@@ -88,8 +88,15 @@ import {
   type ViewMode,
 } from './rton-codec';
 import { createEditorTabFromValue, type EditorTab } from './editor-tabs';
-
-type ThemePreference = 'system' | 'light' | 'dark';
+import {
+  applyThemePreference,
+  readLineWrappingPreference,
+  readThemePreference,
+  saveLineWrappingPreference,
+  saveThemePreference,
+  SYSTEM_DARK_QUERY,
+  type ThemePreference,
+} from './preferences';
 
 type LoadedRtonFile = {
   id: number;
@@ -171,9 +178,6 @@ const LEFT_PANEL_DEFAULT_WIDTH = 300;
 const RIGHT_PANEL_DEFAULT_WIDTH = 380;
 const PANEL_MIN_WIDTH = 220;
 const PANEL_MAX_WIDTH = 560;
-const THEME_PREFERENCE_KEY = 'rton-editor-theme-preference';
-const LINE_WRAPPING_PREFERENCE_KEY = 'rton-editor-line-wrapping';
-const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
 const buttonBase =
   'inline-flex h-7 min-w-0 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded border px-2.5 text-[13px] leading-none transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45';
 
@@ -2080,49 +2084,6 @@ export function App() {
       </footer>
     </main>
   );
-}
-
-function isThemePreference(value: unknown): value is ThemePreference {
-  return value === 'system' || value === 'light' || value === 'dark';
-}
-
-function readThemePreference(): ThemePreference {
-  try {
-    const value = localStorage.getItem(THEME_PREFERENCE_KEY);
-    return isThemePreference(value) ? value : 'system';
-  } catch {
-    return 'system';
-  }
-}
-
-function saveThemePreference(value: ThemePreference) {
-  try {
-    localStorage.setItem(THEME_PREFERENCE_KEY, value);
-  } catch {
-    // Ignore unavailable localStorage in restricted browsing contexts.
-  }
-}
-
-function readLineWrappingPreference() {
-  try {
-    return localStorage.getItem(LINE_WRAPPING_PREFERENCE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function saveLineWrappingPreference(value: boolean) {
-  try {
-    localStorage.setItem(LINE_WRAPPING_PREFERENCE_KEY, String(value));
-  } catch {
-    // Ignore unavailable localStorage in restricted browsing contexts.
-  }
-}
-
-function applyThemePreference(value: ThemePreference) {
-  const resolved = value === 'system' ? (window.matchMedia(SYSTEM_DARK_QUERY).matches ? 'dark' : 'light') : value;
-  document.documentElement.dataset.theme = resolved;
-  document.documentElement.dataset.themePreference = value;
 }
 
 function buildLoadedFileItems({
