@@ -15,9 +15,11 @@ import type {
 
 export function useActiveEditorState({
   activeTabId,
+  initialViewMode,
   t,
 }: {
   activeTabId: number | null;
+  initialViewMode: ViewMode;
   t: Translator;
 }) {
   const [fileName, setFileName] = useState('');
@@ -34,7 +36,7 @@ export function useActiveEditorState({
   const [parsedJson, setParsedJson] = useState<JsonValue | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [stats, setStats] = useState(() => emptyStats());
-  const [viewMode, setViewModeState] = useState<ViewMode>('json');
+  const [viewMode, setViewModeState] = useState<ViewMode>(initialViewMode);
   const [editorSurface, setEditorSurface] = useState<EditorSurface>('text');
   const [surfaceNote, setSurfaceNote] = useState(() => t('app.waitingFile'));
   const [status, setStatus] = useState<StatusState>(() => ({ message: t('status.wasmInitializing'), tone: 'warn' }));

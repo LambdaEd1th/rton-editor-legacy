@@ -43,11 +43,15 @@ import {
 } from '../workspace/editor-workspace';
 import {
   applyThemePreference,
+  previewPreferenceTextMode,
   readLineWrappingPreference,
+  readPreviewPreference,
   readThemePreference,
   saveLineWrappingPreference,
+  savePreviewPreference,
   saveThemePreference,
   SYSTEM_DARK_QUERY,
+  type PreviewPreference,
   type ThemePreference,
 } from '../workspace/preferences';
 import type { LoadedRtonFile } from '../files/loaded-file-items';
@@ -78,6 +82,7 @@ export function useRtonEditorController() {
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
   const [lineWrapping, setLineWrapping] = useState(() => readLineWrappingPreference());
+  const [previewPreference, setPreviewPreference] = useState<PreviewPreference>(() => readPreviewPreference());
   const [editorSearchPanelVisible, setEditorSearchPanelVisible] = useState(false);
 
   const nextTabId = useRef(1);
@@ -124,7 +129,7 @@ export function useRtonEditorController() {
     updateStatus,
     viewMode,
     viewModeRef,
-  } = useActiveEditorState({ activeTabId, t });
+  } = useActiveEditorState({ activeTabId, initialViewMode: previewPreferenceTextMode(previewPreference), t });
   const {
     cancelSearch,
     searchQuery,
@@ -235,8 +240,9 @@ export function useRtonEditorController() {
 
   const restoreEmptyWorkspace = useCallback(
     (nextStatus: StatusState) => {
+      const preferredTextMode = previewPreferenceTextMode(previewPreference);
       clearPendingWork();
-      viewModeRef.current = 'json';
+      viewModeRef.current = preferredTextMode;
 
       setActiveTabId(null);
       setFileName('');
@@ -251,7 +257,7 @@ export function useRtonEditorController() {
       setParsedJson(null);
       setParseError(null);
       setStats(emptyStats());
-      setViewModeState('json');
+      setViewModeState(preferredTextMode);
       setEditorSurface('text');
       setSurfaceNote(t('app.waitingFile'));
       setSearchQuery('');
@@ -259,7 +265,7 @@ export function useRtonEditorController() {
       setEditorSearchPanelVisible(false);
       setStatus(nextStatus);
     },
-    [clearPendingWork, setCurrentValueState, t],
+    [clearPendingWork, previewPreference, setCurrentValueState, t],
   );
 
   const restoreEditorTab = useCallback(
@@ -572,6 +578,7 @@ export function useRtonEditorController() {
     nextLoadedFileId,
     nextTabId,
     openEditorTabs,
+    previewPreference,
     renderTextForValue,
     setLoadedFiles,
     tabs,
@@ -623,6 +630,23 @@ export function useRtonEditorController() {
     [hasActiveFile],
   );
 
+  const selectPreviewPreference = useCallback((preference: PreviewPreference) => {
+    setPreviewPreference(preference);
+    savePreviewPreference(preference);
+  }, []);
+
+  const selectTextViewMode = useCallback(
+    (mode: Exclude<PreviewPreference, 'rton'>) => {
+      selectPreviewPreference(mode);
+      setViewMode(mode);
+    },
+    [selectPreviewPreference, setViewMode],
+  );
+
+  const openPreferredHexEditor = useCallback(() => {
+    selectPreviewPreference('rton');
+    openHexEditor();
+  }, [openHexEditor, selectPreviewPreference]);
 
   const inputText = hasActiveFile
     ? sourceBytes
@@ -760,7 +784,7 @@ export function useRtonEditorController() {
     onOpenFile: openLoadedFile,
     onOpenFiles: loadRtonFiles,
     onOpenFolder: loadRtonFolder,
-    onOpenHexEditor: openHexEditor,
+    onOpenHexEditor: openPreferredHexEditor,
     onResizePanel: resizePanel,
     onRtonValueNavigate: navigateToRtonValueNode,
     onRtonValueUpdate: updateRtonValueNode,
@@ -770,7 +794,7 @@ export function useRtonEditorController() {
     onToggleSelectedFile: toggleSelectedFile,
     onToggleSelectedFiles: toggleSelectedFiles,
     onValidate: validateValue,
-    onViewModeChange: setViewMode,
+    onViewModeChange: selectTextViewMode,
     onWorkspaceDragLeave,
     onWorkspaceDragOver,
     onWorkspaceDrop,

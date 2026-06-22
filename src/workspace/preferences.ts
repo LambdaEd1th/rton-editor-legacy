@@ -1,9 +1,13 @@
+import type { ViewMode } from '../domain/rton-codec';
+
 export type ThemePreference = 'system' | 'light' | 'dark';
+export type PreviewPreference = ViewMode | 'rton';
 
 export const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
 
 const THEME_PREFERENCE_KEY = 'rton-editor-theme-preference';
 const LINE_WRAPPING_PREFERENCE_KEY = 'rton-editor-line-wrapping';
+const PREVIEW_PREFERENCE_KEY = 'rton-editor-preview-preference';
 
 export function readThemePreference(): ThemePreference {
   try {
@@ -38,6 +42,27 @@ export function saveLineWrappingPreference(value: boolean) {
   }
 }
 
+export function readPreviewPreference(): PreviewPreference {
+  try {
+    const value = localStorage.getItem(PREVIEW_PREFERENCE_KEY);
+    return isPreviewPreference(value) ? value : 'rton';
+  } catch {
+    return 'rton';
+  }
+}
+
+export function savePreviewPreference(value: PreviewPreference) {
+  try {
+    localStorage.setItem(PREVIEW_PREFERENCE_KEY, value);
+  } catch {
+    // Ignore unavailable localStorage in restricted browsing contexts.
+  }
+}
+
+export function previewPreferenceTextMode(value: PreviewPreference): ViewMode {
+  return value === 'rton' ? 'json' : value;
+}
+
 export function applyThemePreference(value: ThemePreference) {
   const resolved = value === 'system' ? (window.matchMedia(SYSTEM_DARK_QUERY).matches ? 'dark' : 'light') : value;
   document.documentElement.dataset.theme = resolved;
@@ -46,4 +71,8 @@ export function applyThemePreference(value: ThemePreference) {
 
 function isThemePreference(value: unknown): value is ThemePreference {
   return value === 'system' || value === 'light' || value === 'dark';
+}
+
+function isPreviewPreference(value: unknown): value is PreviewPreference {
+  return value === 'rton' || value === 'json' || value === 'yaml' || value === 'toml';
 }

@@ -11,6 +11,7 @@ import {
 } from '../files/file-loading';
 import type { LoadedRtonFile } from '../files/loaded-file-items';
 import type { Translator } from '../localization/i18n';
+import type { PreviewPreference } from '../workspace/preferences';
 import {
   decodeLoadableSource,
   isPendingTextPreview,
@@ -28,6 +29,7 @@ export function useFileImportActions({
   nextLoadedFileId,
   nextTabId,
   openEditorTabs,
+  previewPreference,
   renderTextForValue,
   setLoadedFiles,
   tabs,
@@ -43,6 +45,7 @@ export function useFileImportActions({
   nextLoadedFileId: { current: number };
   nextTabId: { current: number };
   openEditorTabs: (tabs: EditorTab[]) => void;
+  previewPreference: PreviewPreference;
   renderTextForValue: (value: RtonValue, mode: ViewMode) => boolean;
   setLoadedFiles: (updater: LoadedRtonFile[] | ((files: LoadedRtonFile[]) => LoadedRtonFile[])) => void;
   tabs: EditorTab[];
@@ -67,10 +70,15 @@ export function useFileImportActions({
 
       const loadedTabs: EditorTab[] = [];
       const errors: string[] = [];
-      const preferredEditorSurface: EditorSurface = activeTabId === null ? 'hex' : editorSurface;
+      const { preferredEditorSurface, preferredViewMode } = getPreferredPreview({
+        activeTabId,
+        editorSurface,
+        previewPreference,
+        viewMode: viewModeRef.current,
+      });
       for (const entry of candidates) {
         try {
-          const decoded = await decodeLoadableSource(entry, viewModeRef.current, preferredEditorSurface, t);
+          const decoded = await decodeLoadableSource(entry, preferredViewMode, preferredEditorSurface, t);
           loadedTabs.push(
             createEditorTabFromValue({
               id: nextTabId.current,
@@ -109,7 +117,18 @@ export function useFileImportActions({
         updateStatus(errors.join('；'), 'error');
       }
     },
-    [activeTabId, editorSurface, nextTabId, openEditorTabs, renderTextForValue, t, updateStatus, viewModeRef, wasmReady],
+    [
+      activeTabId,
+      editorSurface,
+      nextTabId,
+      openEditorTabs,
+      previewPreference,
+      renderTextForValue,
+      t,
+      updateStatus,
+      viewModeRef,
+      wasmReady,
+    ],
   );
 
   const stageRtonEntries = useCallback(
@@ -159,8 +178,13 @@ export function useFileImportActions({
 
       try {
         updateStatus(t('status.parsingPath', { path: entry.path }), 'warn');
-        const preferredEditorSurface: EditorSurface = activeTabId === null ? 'hex' : editorSurface;
-        const decoded = await decodeLoadableSource(entry, viewModeRef.current, preferredEditorSurface, t);
+        const { preferredEditorSurface, preferredViewMode } = getPreferredPreview({
+          activeTabId,
+          editorSurface,
+          previewPreference,
+          viewMode: viewModeRef.current,
+        });
+        const decoded = await decodeLoadableSource(entry, preferredViewMode, preferredEditorSurface, t);
         const tabId = nextTabId.current;
         const tab = createEditorTabFromValue({
           id: tabId,
@@ -193,6 +217,7 @@ export function useFileImportActions({
       loadedFiles,
       nextTabId,
       openEditorTabs,
+      previewPreference,
       renderTextForValue,
       setLoadedFiles,
       t,
@@ -240,6 +265,29 @@ export function useFileImportActions({
     openLoadedFile,
     stageRtonEntries,
   };
+}
+
+function getPreferredPreview({
+  activeTabId,
+  editorSurface,
+  previewPreference,
+  viewMode,
+}: {
+  activeTabId: number | null;
+  editorSurface: EditorSurface;
+  previewPreference: PreviewPreference;
+  viewMode: ViewMode;
+}) {
+  const effectivePreference: PreviewPreference = activeTabId === null
+    ? previewPreference
+    : editorSurface === 'hex'
+      ? 'rton'
+      : viewMode;
+
+  return {
+    preferredEditorSurface: effectivePreference === 'rton' ? 'hex' : 'text',
+    preferredViewMode: effectivePreference === 'rton' ? viewMode : effectivePreference,
+  } satisfies { preferredEditorSurface: EditorSurface; preferredViewMode: ViewMode };
 }
 
 function errorMessage(error: unknown) {
