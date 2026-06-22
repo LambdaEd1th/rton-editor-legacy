@@ -73,25 +73,19 @@ import {
   type RtonLoadEntry,
 } from './file-loading';
 import {
-  batchOutputPath,
-  createZipArchive,
   downloadBlob,
   downloadBytes,
   formatBytes,
   outputBaseName,
   timestampForFileName,
-  uniqueZipPath,
-  yieldToBrowser,
-  type ZipFileEntry,
 } from './file-export';
+import { createBatchExportArchive, type BatchExportMode, type BatchStructuredFormatter } from './batch-export';
 
 type JsonScalar = string | number | boolean | null;
 type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
 type ViewMode = 'json' | 'yaml' | 'toml';
 type EditorSurface = 'text' | 'hex';
-type BatchExportMode = 'rton' | 'json' | 'yaml' | 'toml';
 type ThemePreference = 'system' | 'light' | 'dark';
-type StructuredFormatter = (value: RtonValue, mode: StructuredFormatMode) => string;
 type Tone = 'ok' | 'warn' | 'error';
 type StatusState = { message: string; tone: Tone };
 
@@ -1490,50 +1484,38 @@ export function App() {
 
       const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
       const filesById = new Map(loadedFiles.map((file) => [file.id, file]));
-      const usedPaths = new Set<string>();
-      const zipEntries: ZipFileEntry[] = [];
-      const errors: string[] = [];
       const structuredFormatter =
         mode === 'yaml' || mode === 'toml' ? (await import('./format-conversion')).formatStructuredText : null;
 
-      for (let index = 0; index < selectedItems.length; index += 1) {
-        const item = selectedItems[index];
-        try {
-          const value = await resolveBatchItemValue(item, {
+      const result = await createBatchExportArchive({
+        items: selectedItems,
+        mode,
+        resolveValue: (item) =>
+          resolveBatchItemValue(item, {
             activeTabId,
             currentValue: currentValueRef.current,
             filesById,
             tabsById,
-          });
-          const bytes = convertRtonValueForBatch(value, mode, {
+          }),
+        encodeValue: (value) =>
+          convertRtonValueForBatch(value, mode, {
             compact: compactOutput,
             encrypted: encryptOutput,
             structuredFormatter,
-          });
-          zipEntries.push({
-            path: uniqueZipPath(batchOutputPath(item.path, mode), usedPaths),
-            bytes,
-          });
-        } catch (error) {
-          errors.push(`${item.path}: ${errorMessage(error)}`);
-        }
+          }),
+        describeError: errorMessage,
+      });
 
-        if (index % 24 === 23) {
-          await yieldToBrowser();
-        }
-      }
-
-      if (zipEntries.length === 0) {
-        updateStatus(errors[0] ?? t('status.noBatchSuccess'), 'error');
+      if (!result.zipBytes) {
+        updateStatus(result.errors[0] ?? t('status.noBatchSuccess'), 'error');
         return;
       }
 
-      const zipBytes = createZipArchive(zipEntries);
-      downloadBytes(zipBytes, `rton-editor-${mode}-${timestampForFileName()}.zip`);
-      const errorSuffix = errors.length > 0 ? t('status.batchFailureSuffix', { count: errors.length.toLocaleString() }) : '';
+      downloadBytes(result.zipBytes, `rton-editor-${mode}-${timestampForFileName()}.zip`);
+      const errorSuffix = result.errors.length > 0 ? t('status.batchFailureSuffix', { count: result.errors.length.toLocaleString() }) : '';
       updateStatus(
-        t('status.batchExported', { count: zipEntries.length.toLocaleString(), format: mode.toUpperCase(), suffix: errorSuffix }),
-        errors.length > 0 ? 'warn' : 'ok',
+        t('status.batchExported', { count: result.exportedCount.toLocaleString(), format: mode.toUpperCase(), suffix: errorSuffix }),
+        result.errors.length > 0 ? 'warn' : 'ok',
       );
     },
     [
@@ -2441,7 +2423,7 @@ function convertRtonValueForBatch(
   options: {
     compact: boolean;
     encrypted: boolean;
-    structuredFormatter: StructuredFormatter | null;
+    structuredFormatter: BatchStructuredFormatter | null;
   },
 ) {
   if (mode === 'rton') {
