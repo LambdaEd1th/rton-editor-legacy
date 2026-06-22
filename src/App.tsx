@@ -6,12 +6,12 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
-import { FolderOpen } from 'lucide-react';
 import init from './wasm/rton-editor/rton_editor_wasm';
-import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
 import { AppToolbar } from './components/AppToolbar';
+import type { EditorJumpTarget } from './components/CodeEditor';
+import { EditorStage } from './components/EditorStage';
 import { EditorTabStrip, type TabDropPlacement } from './components/EditorTabStrip';
-import { HexEditor, type HexEditorJumpTarget } from './components/HexEditor';
+import type { HexEditorJumpTarget } from './components/HexEditor';
 import { AppStatusBar } from './components/AppStatusBar';
 import { FileListPanel } from './components/FileListPanel';
 import { RightInspectorPanel } from './components/RightInspectorPanel';
@@ -1494,35 +1494,21 @@ export function App() {
 
         <PanelResizeHandle side="left" width={leftPanelWidth} onResize={resizePanel} />
 
-        <section className="rton-editor-stage">
-          {hasActiveFile && editorSurface === 'hex' && displayedHexBytes ? (
-	            <HexEditor
-	              bytes={displayedHexBytes}
-	              jumpTarget={hexJumpTarget}
-	              searchPanelVisible={editorSearchPanelVisible}
-              onChange={onHexBytesChange}
-              onSearchPanelVisibleChange={setEditorSearchPanelVisible}
-            />
-          ) : hasActiveFile ? (
-            <CodeEditor
-              value={editorText}
-              mode={viewMode}
-              lineWrapping={lineWrapping}
-              jumpTarget={editorJumpTarget}
-              searchPanelVisible={editorSearchPanelVisible}
-              onChange={onEditorInput}
-              onSearchPanelVisibleChange={setEditorSearchPanelVisible}
-            />
-          ) : (
-            <div className="rton-empty-drop-stage flex h-full min-h-0 flex-col items-center justify-center p-6 text-center">
-              <FolderOpen aria-hidden="true" className="mb-3 h-12 w-12 text-[var(--color-accent-text)] opacity-70" />
-              <div className="mb-1 max-w-[460px] text-[17px] font-semibold text-[var(--color-drop-hint)]">
-                {t('drop.title')}
-              </div>
-              <div className="text-[13px] text-[var(--color-drop-hint-sub)]">{t('drop.subtitle', { hint: LOADABLE_FILE_HINT })}</div>
-            </div>
-          )}
-        </section>
+        <EditorStage
+          t={t}
+          displayedHexBytes={displayedHexBytes}
+          editorJumpTarget={editorJumpTarget}
+          editorSearchPanelVisible={editorSearchPanelVisible}
+          editorSurface={editorSurface}
+          editorText={editorText}
+          hasActiveFile={hasActiveFile}
+          hexJumpTarget={hexJumpTarget}
+          lineWrapping={lineWrapping}
+          viewMode={viewMode}
+          onEditorChange={onEditorInput}
+          onHexChange={onHexBytesChange}
+          onSearchPanelVisibleChange={setEditorSearchPanelVisible}
+        />
 
         <PanelResizeHandle side="right" width={rightPanelWidth} onResize={resizePanel} />
 
