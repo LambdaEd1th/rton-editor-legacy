@@ -7,38 +7,38 @@ import {
   type CSSProperties,
 } from 'react';
 import init from './wasm/rton-editor/rton_editor_wasm';
-import { AppToolbar } from './components/AppToolbar';
-import { EditorStage } from './components/EditorStage';
-import { EditorTabStrip, type TabDropPlacement } from './components/EditorTabStrip';
-import { AppStatusBar } from './components/AppStatusBar';
-import { FileListPanel } from './components/FileListPanel';
-import { RightInspectorPanel } from './components/RightInspectorPanel';
-import { PanelResizeHandle, type PanelSide } from './components/Panels';
+import { AppToolbar } from './components/app/AppToolbar';
+import { EditorStage } from './components/editor/EditorStage';
+import { EditorTabStrip, type TabDropPlacement } from './components/editor/EditorTabStrip';
+import { AppStatusBar } from './components/app/AppStatusBar';
+import { FileListPanel } from './components/files/FileListPanel';
+import { RightInspectorPanel } from './components/inspector/RightInspectorPanel';
+import { PanelResizeHandle, type PanelSide } from './components/panels/Panels';
 import { useI18n } from './localization/use-i18n';
-import { useHexEditActions } from './hex-edit-actions';
-import { useActiveEditorState } from './active-editor-state';
-import { sampleJson } from './sample';
-import { runActiveEditorShortcut, type EditorShortcutKind } from './components/keyboard-shortcuts';
-import type { RtonInlineSelectOption } from './components/RtonInlineSelect';
-import { emptyStats } from './rton-value-analysis';
-import { useTextFormatFlow } from './text-format-flow';
-import { useRtonValueActions } from './rton-value-actions';
-import { useRtonValueSearch } from './rton-value-search';
+import { useHexEditActions } from './hooks/hex-edit-actions';
+import { useActiveEditorState } from './hooks/active-editor-state';
+import { sampleJson } from './fixtures/sample';
+import { runActiveEditorShortcut, type EditorShortcutKind } from './components/editor/keyboard-shortcuts';
+import type { RtonInlineSelectOption } from './components/inspector/RtonInlineSelect';
+import { emptyStats } from './domain/rton-value-analysis';
+import { useTextFormatFlow } from './hooks/text-format-flow';
+import { useRtonValueActions } from './hooks/rton-value-actions';
+import { useRtonValueSearch } from './hooks/rton-value-search';
 import {
   collectDroppedEntries,
-} from './file-loading';
-import { useFileImportActions } from './file-import-actions';
+} from './files/file-loading';
+import { useFileImportActions } from './hooks/file-import-actions';
 import {
   formatBytes,
-} from './file-export';
-import { useExportActions } from './export-actions';
+} from './files/file-export';
+import { useExportActions } from './hooks/export-actions';
 import {
   parseJsonTextToRtonValue,
   rtonValueToJsonText,
   type RtonBinaryEncoding,
   type StatusState,
-} from './rton-codec';
-import { createEditorTabFromValue, type EditorTab } from './editor-tabs';
+} from './domain/rton-codec';
+import { createEditorTabFromValue, type EditorTab } from './workspace/editor-tabs';
 import {
   appendEditorTabs,
   closeEditorTabState,
@@ -47,7 +47,7 @@ import {
   moveEditorTabState,
   syncActiveEditorTab,
   unlinkLoadedFileTab,
-} from './editor-workspace';
+} from './workspace/editor-workspace';
 import {
   applyThemePreference,
   readLineWrappingPreference,
@@ -56,18 +56,18 @@ import {
   saveThemePreference,
   SYSTEM_DARK_QUERY,
   type ThemePreference,
-} from './preferences';
-import type { LoadedRtonFile } from './loaded-file-items';
-import { useLoadedFileListState } from './loaded-file-list-state';
+} from './workspace/preferences';
+import type { LoadedRtonFile } from './files/loaded-file-items';
+import { useLoadedFileListState } from './hooks/loaded-file-list-state';
 import {
   clampPanelWidth,
   LEFT_PANEL_DEFAULT_WIDTH,
   RIGHT_PANEL_DEFAULT_WIDTH,
-} from './panel-layout';
-import { cx } from './ui-classes';
+} from './workspace/panel-layout';
+import { cx } from './utils/ui-classes';
 import {
   useByteTransformWorker,
-} from './worker-clients';
+} from './hooks/worker-clients';
 
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
