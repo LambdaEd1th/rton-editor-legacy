@@ -2,7 +2,6 @@ import { t as translate, type Translator } from '../localization/i18n';
 import {
   jsonPreviewUnavailableText,
   rtonValueToJsonText,
-  rtonValueToJsonValue,
   type EditorSurface,
   type JsonValue,
   type RtonBinaryEncoding,
@@ -45,6 +44,8 @@ export function createEditorTabFromValue({
   viewMode = 'json',
   editorSurface = 'text',
   status,
+  stats,
+  parsedJson = null,
 }: {
   id: number;
   fileName: string;
@@ -57,12 +58,13 @@ export function createEditorTabFromValue({
   viewMode?: ViewMode;
   editorSurface?: EditorSurface;
   status: StatusState;
+  stats?: Stats;
+  parsedJson?: JsonValue | null;
 }, t: Translator = translate): EditorTab {
   const actualBinaryBytes = binaryBytes ?? sourceBytes;
   const actualEditorSurface = editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text';
 
   try {
-    const plainValue = rtonValueToJsonValue(value);
     let text = editorText;
     let note = surfaceNote ?? t('format.editable', { label: viewMode.toUpperCase() });
     if (text === undefined) {
@@ -83,9 +85,9 @@ export function createEditorTabFromValue({
       currentValue: value,
       editorText: text,
       lastOutputBytes: null,
-      parsedJson: plainValue,
+      parsedJson,
       parseError: null,
-      stats: collectStats(value),
+      stats: stats ?? collectStats(value),
       viewMode,
       editorSurface: actualEditorSurface,
       surfaceNote: note,
@@ -104,9 +106,9 @@ export function createEditorTabFromValue({
       currentValue: value,
       editorText: editorText ?? '',
       lastOutputBytes: null,
-      parsedJson: null,
+      parsedJson,
       parseError: message,
-      stats: emptyStats(),
+      stats: stats ?? emptyStats(),
       viewMode,
       editorSurface: actualEditorSurface,
       surfaceNote: surfaceNote ?? t('format.parseFailed', { label: viewMode.toUpperCase(), message }),

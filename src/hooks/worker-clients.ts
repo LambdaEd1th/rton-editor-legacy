@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { Translator } from '../localization/i18n';
+import type { Stats } from '../domain/rton-value-analysis';
 import type { RtonValue } from '../domain/rton-value';
 import type { RtonBinaryEncoding, ViewMode } from '../domain/rton-codec';
 
@@ -92,6 +93,36 @@ type ByteTransformWorkerResponse =
 
 type PendingByteTransform = {
   resolve: (output: ByteTransformWorkerOutput) => void;
+  reject: (error: Error) => void;
+};
+
+export type RtonDecodeWorkerOutput = {
+  value: RtonValue;
+  stats: Stats;
+  plainBytes: Uint8Array;
+  compact: boolean;
+  encrypted: boolean;
+};
+
+type RtonDecodeWorkerRequest = {
+  id: number;
+  bytes: Uint8Array;
+};
+
+type RtonDecodeWorkerResponse =
+  | ({
+      id: number;
+      ok: true;
+      elapsedMs: number;
+    } & RtonDecodeWorkerOutput)
+  | {
+      id: number;
+      ok: false;
+      error: string;
+    };
+
+type PendingRtonDecode = {
+  resolve: (output: RtonDecodeWorkerOutput) => void;
   reject: (error: Error) => void;
 };
 
@@ -333,5 +364,97 @@ export function useByteTransformWorker({
     runByteTransformInWorker,
     runByteTransformSizeInWorker,
     terminateByteTransformWorker,
+  };
+}
+
+export function useRtonDecodeWorker({
+  t,
+  onError,
+}: {
+  t: Translator;
+  onError: (message: string) => void;
+}) {
+  const decodeWorker = useRef<Worker | null>(null);
+  const decodeRequestId = useRef(0);
+  const decodePromises = useRef(new Map<number, PendingRtonDecode>());
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  const rejectPendingDecodes = useCallback((message: string) => {
+    for (const pending of decodePromises.current.values()) {
+      pending.reject(new Error(message));
+    }
+    decodePromises.current.clear();
+  }, []);
+
+  const terminateRtonDecodeWorker = useCallback(() => {
+    decodeRequestId.current += 1;
+    rejectPendingDecodes(t('status.rtonDecodeCancelled'));
+    if (decodeWorker.current) {
+      decodeWorker.current.terminate();
+      decodeWorker.current = null;
+    }
+  }, [rejectPendingDecodes, t]);
+
+  const getRtonDecodeWorker = useCallback(() => {
+    if (!decodeWorker.current) {
+      decodeWorker.current = new Worker(new URL('../workers/rton-decode-worker.ts', import.meta.url), { type: 'module' });
+      decodeWorker.current.addEventListener('message', (event: MessageEvent<RtonDecodeWorkerResponse>) => {
+        const response = event.data;
+        const pending = decodePromises.current.get(response.id);
+        if (!pending) {
+          return;
+        }
+
+        decodePromises.current.delete(response.id);
+        if (response.ok) {
+          pending.resolve({
+            value: response.value,
+            stats: response.stats,
+            plainBytes: response.plainBytes,
+            compact: response.compact,
+            encrypted: response.encrypted,
+          });
+        } else {
+          pending.reject(new Error(response.error));
+        }
+      });
+      decodeWorker.current.addEventListener('error', (event) => {
+        event.preventDefault();
+        const message = event instanceof ErrorEvent && event.message ? event.message : t('status.rtonDecodeWorkerError');
+        rejectPendingDecodes(message);
+        onErrorRef.current(message);
+      });
+      decodeWorker.current.addEventListener('messageerror', () => {
+        const message = t('status.rtonDecodeWorkerUnreadable');
+        rejectPendingDecodes(message);
+        onErrorRef.current(message);
+      });
+    }
+
+    return decodeWorker.current;
+  }, [rejectPendingDecodes, t]);
+
+  const runRtonDecodeInWorker = useCallback(
+    (bytes: Uint8Array) => {
+      const requestId = decodeRequestId.current + 1;
+      decodeRequestId.current = requestId;
+      const request = { id: requestId, bytes } satisfies RtonDecodeWorkerRequest;
+      return new Promise<RtonDecodeWorkerOutput>((resolve, reject) => {
+        decodePromises.current.set(requestId, { resolve, reject });
+        getRtonDecodeWorker().postMessage(request, [bytes.buffer as ArrayBuffer]);
+      });
+    },
+    [getRtonDecodeWorker],
+  );
+
+  useEffect(() => terminateRtonDecodeWorker, [terminateRtonDecodeWorker]);
+
+  return {
+    runRtonDecodeInWorker,
+    terminateRtonDecodeWorker,
   };
 }

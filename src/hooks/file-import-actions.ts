@@ -4,9 +4,11 @@ import {
   collectDirectoryEntries,
   collectLoadableCandidates,
   displayFilePath,
+  loadableFileKindLabel,
   LOADABLE_FILE_HINT,
   normalizeDisplayPath,
   type DirectoryPickerWindow,
+  type LoadableFileCandidate,
   type RtonLoadEntry,
 } from '../files/file-loading';
 import type { LoadedRtonFile } from '../files/loaded-file-items';
@@ -16,10 +18,12 @@ import {
   decodeLoadableSource,
   isPendingTextPreview,
   type EditorSurface,
+  type DecodedLoadableSource,
   type Tone,
   type ViewMode,
 } from '../domain/rton-codec';
 import type { RtonValue } from '../domain/rton-value';
+import type { RtonDecodeWorkerOutput } from './worker-clients';
 
 export function useFileImportActions({
   activeTabId,
@@ -31,6 +35,7 @@ export function useFileImportActions({
   openEditorTabs,
   previewPreference,
   renderTextForValue,
+  runRtonDecodeInWorker,
   setLoadedFiles,
   tabs,
   t,
@@ -47,6 +52,7 @@ export function useFileImportActions({
   openEditorTabs: (tabs: EditorTab[]) => void;
   previewPreference: PreviewPreference;
   renderTextForValue: (value: RtonValue, mode: ViewMode) => boolean;
+  runRtonDecodeInWorker: (bytes: Uint8Array) => Promise<RtonDecodeWorkerOutput>;
   setLoadedFiles: (updater: LoadedRtonFile[] | ((files: LoadedRtonFile[]) => LoadedRtonFile[])) => void;
   tabs: EditorTab[];
   t: Translator;
@@ -78,7 +84,7 @@ export function useFileImportActions({
       });
       for (const entry of candidates) {
         try {
-          const decoded = await decodeLoadableSource(entry, preferredViewMode, preferredEditorSurface, t);
+          const decoded = await decodeLoadableEntry(entry, preferredViewMode, preferredEditorSurface, t, runRtonDecodeInWorker);
           loadedTabs.push(
             createEditorTabFromValue({
               id: nextTabId.current,
@@ -92,6 +98,8 @@ export function useFileImportActions({
               viewMode: decoded.viewMode,
               editorSurface: decoded.editorSurface,
               status: decoded.status,
+              stats: decoded.stats,
+              parsedJson: decoded.parsedJson,
             }),
           );
           nextTabId.current += 1;
@@ -124,6 +132,7 @@ export function useFileImportActions({
       openEditorTabs,
       previewPreference,
       renderTextForValue,
+      runRtonDecodeInWorker,
       t,
       updateStatus,
       viewModeRef,
@@ -184,7 +193,7 @@ export function useFileImportActions({
           previewPreference,
           viewMode: viewModeRef.current,
         });
-        const decoded = await decodeLoadableSource(entry, preferredViewMode, preferredEditorSurface, t);
+        const decoded = await decodeLoadableEntry(entry, preferredViewMode, preferredEditorSurface, t, runRtonDecodeInWorker);
         const tabId = nextTabId.current;
         const tab = createEditorTabFromValue({
           id: tabId,
@@ -198,6 +207,8 @@ export function useFileImportActions({
           viewMode: decoded.viewMode,
           editorSurface: decoded.editorSurface,
           status: decoded.status,
+          stats: decoded.stats,
+          parsedJson: decoded.parsedJson,
         });
         nextTabId.current += 1;
         setLoadedFiles((files) => files.map((file) => (file.id === fileId ? { ...file, tabId } : file)));
@@ -219,6 +230,7 @@ export function useFileImportActions({
       openEditorTabs,
       previewPreference,
       renderTextForValue,
+      runRtonDecodeInWorker,
       setLoadedFiles,
       t,
       tabs,
@@ -264,6 +276,43 @@ export function useFileImportActions({
     loadRtonFolder,
     openLoadedFile,
     stageRtonEntries,
+  };
+}
+
+async function decodeLoadableEntry(
+  entry: LoadableFileCandidate,
+  preferredViewMode: ViewMode,
+  preferredEditorSurface: EditorSurface,
+  t: Translator,
+  runRtonDecodeInWorker: (bytes: Uint8Array) => Promise<RtonDecodeWorkerOutput>,
+): Promise<DecodedLoadableSource> {
+  if (entry.kind !== 'rton') {
+    return decodeLoadableSource(entry, preferredViewMode, preferredEditorSurface, t);
+  }
+
+  const bytes = new Uint8Array(await entry.file.arrayBuffer());
+  const { value, stats, plainBytes, compact, encrypted } = await runRtonDecodeInWorker(bytes);
+  const useHexSurface = preferredEditorSurface === 'hex';
+  const label = loadableFileKindLabel(preferredViewMode);
+  const editorText = useHexSurface ? '' : t('format.generatingPreviewText', { label });
+  const textSurfaceNote = useHexSurface ? t('app.notGenerated') : t('format.generatingPreview', { label });
+
+  return {
+    value,
+    editorText,
+    surfaceNote: useHexSurface ? t('format.rtonEditable') : textSurfaceNote,
+    sourceBytes: plainBytes,
+    binaryBytes: plainBytes,
+    binaryEncoding: { compact, encrypted: false },
+    viewMode: preferredViewMode,
+    editorSurface: useHexSurface ? 'hex' : 'text',
+    status: {
+      message: encrypted ? t('status.encryptedRtonParsed') : t('format.parsed', { label: 'RTON' }),
+      tone: 'ok',
+    },
+    stats,
+    parsedJson: null,
+    needsTextPreview: !useHexSurface,
   };
 }
 

@@ -15,6 +15,7 @@ import {
   json_text_to_value,
   value_to_json_text,
 } from '../wasm/rton-editor/rton_editor_wasm';
+import type { Stats } from './rton-value-analysis';
 
 export type JsonScalar = string | number | boolean | null;
 export type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
@@ -38,6 +39,8 @@ export type DecodedLoadableSource = {
   viewMode: ViewMode;
   editorSurface: EditorSurface;
   status: StatusState;
+  stats?: Stats;
+  parsedJson?: JsonValue | null;
   needsTextPreview?: boolean;
 };
 

@@ -61,7 +61,7 @@ import {
   LEFT_PANEL_DEFAULT_WIDTH,
   RIGHT_PANEL_DEFAULT_WIDTH,
 } from '../workspace/panel-layout';
-import { useByteTransformWorker } from '../hooks/worker-clients';
+import { useByteTransformWorker, useRtonDecodeWorker } from '../hooks/worker-clients';
 import { buildOutputText } from './output-summary';
 
 const SEARCH_DEBOUNCE_MS = 140;
@@ -158,6 +158,10 @@ export function useRtonEditorController() {
   );
 
   const { runByteTransformInWorker, runByteTransformSizeInWorker } = useByteTransformWorker({
+    t,
+    onError: (message) => updateStatus(message, 'error'),
+  });
+  const { runRtonDecodeInWorker } = useRtonDecodeWorker({
     t,
     onError: (message) => updateStatus(message, 'error'),
   });
@@ -586,6 +590,7 @@ export function useRtonEditorController() {
     openEditorTabs,
     previewPreference,
     renderTextForValue,
+    runRtonDecodeInWorker,
     setLoadedFiles,
     tabs,
     t,

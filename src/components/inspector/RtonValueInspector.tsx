@@ -147,6 +147,7 @@ function RtonValueTreeNode({
   };
 
   if (value.kind === 'array') {
+    const shownItems = value.items.slice(0, VALUE_TREE_CHILD_LIMIT);
     return (
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="my-0.5">
         <summary className="cursor-pointer rounded px-1 py-1 hover:bg-[var(--color-control-hover)]" onClick={navigateFromRow}>
@@ -164,11 +165,12 @@ function RtonValueTreeNode({
         </summary>
         {open && (
           <RtonValueTreeChildren
-            entries={value.items.map((item, index) => ({
+            entries={shownItems.map((item, index) => ({
               key: `[${index}]`,
               value: item,
               path: [...path, { kind: 'array' as const, index }],
             }))}
+            totalCount={value.items.length}
             depth={depth + 1}
             onChange={onChange}
             onNavigate={onNavigate}
@@ -180,6 +182,7 @@ function RtonValueTreeNode({
   }
 
   if (value.kind === 'object') {
+    const shownEntries = value.entries.slice(0, VALUE_TREE_CHILD_LIMIT);
     return (
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="my-0.5">
         <summary className="cursor-pointer rounded px-1 py-1 hover:bg-[var(--color-control-hover)]" onClick={navigateFromRow}>
@@ -197,11 +200,12 @@ function RtonValueTreeNode({
         </summary>
         {open && (
           <RtonValueTreeChildren
-            entries={value.entries.map((entry, index) => ({
+            entries={shownEntries.map((entry, index) => ({
               key: entry.key,
               value: entry.value,
               path: [...path, { kind: 'object' as const, index }],
             }))}
+            totalCount={value.entries.length}
             depth={depth + 1}
             onChange={onChange}
             onNavigate={onNavigate}
@@ -236,23 +240,24 @@ function RtonValueTreeNode({
 
 function RtonValueTreeChildren({
   entries,
+  totalCount,
   depth,
   onChange,
   onNavigate,
   onError,
 }: {
   entries: ReadonlyArray<{ key: string; value: RtonValue; path: RtonValuePath }>;
+  totalCount: number;
   depth: number;
   onChange: (path: RtonValuePath, value: RtonValue) => void;
   onNavigate: (path: RtonValuePath) => void;
   onError: (message: string) => void;
 }) {
   const { t } = useI18n();
-  const shown = entries.slice(0, VALUE_TREE_CHILD_LIMIT);
 
   return (
     <div className="rton-value-tree-children" style={{ '--rton-value-depth': depth } as CSSProperties}>
-      {shown.map((entry, index) => (
+      {entries.map((entry, index) => (
         <RtonValueTreeNode
           key={`${entry.key}:${index}`}
           label={entry.key}
@@ -264,9 +269,9 @@ function RtonValueTreeChildren({
           onError={onError}
         />
       ))}
-      {entries.length > shown.length && (
+      {totalCount > entries.length && (
         <div className="my-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2 text-[var(--color-text-muted)]">
-          {t('inspector.truncated', { shown: shown.length.toLocaleString(), total: entries.length.toLocaleString() })}
+          {t('inspector.truncated', { shown: entries.length.toLocaleString(), total: totalCount.toLocaleString() })}
         </div>
       )}
     </div>
