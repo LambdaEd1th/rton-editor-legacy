@@ -4,12 +4,15 @@ import type { Stats } from '../../domain/rton-value-analysis';
 import { RTON_SEARCH_MATCH_LIMIT } from '../../domain/rton-value-analysis';
 import type { RtonValuePath, SearchState } from '../../domain/rton-value-editing';
 import type { RtonValue } from '../../domain/rton-value';
+import type { RtonDocumentRef } from '../../domain/rton-document';
+import type { RtonDocumentChildrenOutput } from '../../hooks/worker-clients';
 import { MetaItem, PanelHeader, Stat } from '../panels/Panels';
 import { RtonValueInspector } from './RtonValueInspector';
 
 export function RightInspectorPanel({
   t,
   currentValue,
+  rtonDocument,
   displayFileName,
   hasActiveFile,
   inputText,
@@ -18,12 +21,14 @@ export function RightInspectorPanel({
   searchState,
   stats,
   onError,
+  onLoadDocumentChildren,
   onNavigate,
   onSearchChange,
   onValueChange,
 }: {
   t: Translator;
   currentValue: RtonValue | null;
+  rtonDocument: RtonDocumentRef | null;
   displayFileName: string;
   hasActiveFile: boolean;
   inputText: string;
@@ -32,6 +37,7 @@ export function RightInspectorPanel({
   searchState: SearchState;
   stats: Stats;
   onError: (message: string) => void;
+  onLoadDocumentChildren: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
   onNavigate: (path: RtonValuePath) => void;
   onSearchChange: (value: string) => void;
   onValueChange: (path: RtonValuePath, value: RtonValue) => void;
@@ -103,7 +109,9 @@ export function RightInspectorPanel({
             <RtonValueInspector
               state={searchState}
               value={currentValue}
+              document={rtonDocument}
               searchMatchLimit={RTON_SEARCH_MATCH_LIMIT}
+              loadDocumentChildren={onLoadDocumentChildren}
               onChange={onValueChange}
               onNavigate={onNavigate}
               onError={onError}

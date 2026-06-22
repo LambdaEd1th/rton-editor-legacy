@@ -4,6 +4,7 @@ import type { HexEditorJumpTarget } from '../components/editor/HexEditor';
 import type { Translator } from '../localization/i18n';
 import { emptyStats } from '../domain/rton-value-analysis';
 import type { RtonValue } from '../domain/rton-value';
+import type { RtonDocumentRef } from '../domain/rton-document';
 import type {
   EditorSurface,
   JsonValue,
@@ -27,6 +28,7 @@ export function useActiveEditorState({
   const [binaryBytes, setBinaryBytes] = useState<Uint8Array | null>(null);
   const [binaryEncoding, setBinaryEncoding] = useState<RtonBinaryEncoding | null>(null);
   const [currentValue, setCurrentValue] = useState<RtonValue | null>(null);
+  const [rtonDocument, setRtonDocument] = useState<RtonDocumentRef | null>(null);
   const [editorText, setEditorTextState] = useState('');
   const [editorJumpTarget, setEditorJumpTarget] = useState<EditorJumpTarget | null>(null);
   const [hexJumpTarget, setHexJumpTarget] = useState<HexEditorJumpTarget | null>(null);
@@ -97,6 +99,7 @@ export function useActiveEditorState({
     lastOutputBytes,
     parseError,
     parsedJson,
+    rtonDocument,
     setBinaryBytes,
     setBinaryEncoding,
     setCompactOutput,
@@ -110,6 +113,7 @@ export function useActiveEditorState({
     setLastOutputBytes,
     setParseError,
     setParsedJson,
+    setRtonDocument,
     setSourceBytes,
     setStats,
     setStatus,

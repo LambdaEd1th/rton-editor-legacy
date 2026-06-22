@@ -11,6 +11,7 @@ import {
 import type { RtonValue } from '../domain/rton-value';
 import { collectStats, emptyStats, type Stats } from '../domain/rton-value-analysis';
 import type { SearchState } from '../domain/rton-value-editing';
+import type { RtonDocumentRef } from '../domain/rton-document';
 
 export type EditorTab = {
   id: number;
@@ -19,6 +20,7 @@ export type EditorTab = {
   binaryBytes: Uint8Array | null;
   binaryEncoding: RtonBinaryEncoding | null;
   currentValue: RtonValue | null;
+  rtonDocument: RtonDocumentRef | null;
   editorText: string;
   lastOutputBytes: number | null;
   parsedJson: JsonValue | null;
@@ -41,6 +43,7 @@ export function createEditorTabFromValue({
   sourceBytes,
   binaryBytes,
   binaryEncoding,
+  rtonDocument = null,
   viewMode = 'json',
   editorSurface = 'text',
   status,
@@ -55,6 +58,7 @@ export function createEditorTabFromValue({
   sourceBytes: Uint8Array | null;
   binaryBytes?: Uint8Array | null;
   binaryEncoding?: RtonBinaryEncoding | null;
+  rtonDocument?: RtonDocumentRef | null;
   viewMode?: ViewMode;
   editorSurface?: EditorSurface;
   status: StatusState;
@@ -83,6 +87,7 @@ export function createEditorTabFromValue({
       binaryBytes: actualBinaryBytes,
       binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
       currentValue: value,
+      rtonDocument,
       editorText: text,
       lastOutputBytes: null,
       parsedJson,
@@ -104,6 +109,7 @@ export function createEditorTabFromValue({
       binaryBytes: actualBinaryBytes,
       binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
       currentValue: value,
+      rtonDocument,
       editorText: editorText ?? '',
       lastOutputBytes: null,
       parsedJson,
@@ -117,6 +123,55 @@ export function createEditorTabFromValue({
       status: { message, tone: 'error' },
     };
   }
+}
+
+export function createEditorTabFromDocument({
+  id,
+  fileName,
+  document,
+  editorText = '',
+  surfaceNote,
+  sourceBytes,
+  binaryBytes,
+  binaryEncoding,
+  viewMode = 'json',
+  editorSurface = 'hex',
+  status,
+}: {
+  id: number;
+  fileName: string;
+  document: RtonDocumentRef;
+  editorText?: string;
+  surfaceNote?: string;
+  sourceBytes: Uint8Array | null;
+  binaryBytes?: Uint8Array | null;
+  binaryEncoding?: RtonBinaryEncoding | null;
+  viewMode?: ViewMode;
+  editorSurface?: EditorSurface;
+  status: StatusState;
+}): EditorTab {
+  const actualBinaryBytes = binaryBytes ?? sourceBytes;
+  const actualEditorSurface = editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text';
+  return {
+    id,
+    fileName,
+    sourceBytes,
+    binaryBytes: actualBinaryBytes,
+    binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+    currentValue: null,
+    rtonDocument: document,
+    editorText,
+    lastOutputBytes: null,
+    parsedJson: null,
+    parseError: null,
+    stats: document.stats,
+    viewMode,
+    editorSurface: actualEditorSurface,
+    surfaceNote: surfaceNote ?? '',
+    searchQuery: '',
+    searchState: { kind: 'idle' },
+    status,
+  };
 }
 
 function errorMessage(error: unknown) {

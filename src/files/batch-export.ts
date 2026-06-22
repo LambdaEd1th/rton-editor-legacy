@@ -121,7 +121,11 @@ export async function resolveBatchExportItemValue(
     if (!entry) {
       throw new Error(translate('status.fileListItemStale'));
     }
-    return (await decodeLoadableSource(entry)).value;
+    const decoded = await decodeLoadableSource(entry);
+    if (!decoded.value) {
+      throw new Error(translate('status.noExportValue'));
+    }
+    return decoded.value;
   }
 
   throw new Error(translate('status.noExportValue'));

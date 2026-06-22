@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { createEditorTabFromValue, type EditorTab } from '../workspace/editor-tabs';
+import { createEditorTabFromDocument, createEditorTabFromValue, type EditorTab } from '../workspace/editor-tabs';
 import {
   collectDirectoryEntries,
   collectLoadableCandidates,
@@ -23,6 +23,7 @@ import {
   type ViewMode,
 } from '../domain/rton-codec';
 import type { RtonValue } from '../domain/rton-value';
+import { RTON_LARGE_DOCUMENT_THRESHOLD_BYTES } from '../domain/rton-document';
 import type { RtonDecodeWorkerOutput } from './worker-clients';
 
 export function useFileImportActions({
@@ -52,7 +53,7 @@ export function useFileImportActions({
   openEditorTabs: (tabs: EditorTab[]) => void;
   previewPreference: PreviewPreference;
   renderTextForValue: (value: RtonValue, mode: ViewMode) => boolean;
-  runRtonDecodeInWorker: (bytes: Uint8Array) => Promise<RtonDecodeWorkerOutput>;
+  runRtonDecodeInWorker: (bytes: Uint8Array, options?: { includeValue?: boolean; retainDocument?: boolean }) => Promise<RtonDecodeWorkerOutput>;
   setLoadedFiles: (updater: LoadedRtonFile[] | ((files: LoadedRtonFile[]) => LoadedRtonFile[])) => void;
   tabs: EditorTab[];
   t: Translator;
@@ -86,20 +87,10 @@ export function useFileImportActions({
         try {
           const decoded = await decodeLoadableEntry(entry, preferredViewMode, preferredEditorSurface, t, runRtonDecodeInWorker);
           loadedTabs.push(
-            createEditorTabFromValue({
+            createEditorTabFromDecodedSource({
               id: nextTabId.current,
               fileName: normalizeDisplayPath(entry.path),
-              value: decoded.value,
-              editorText: decoded.editorText,
-              surfaceNote: decoded.surfaceNote,
-              sourceBytes: decoded.sourceBytes,
-              binaryBytes: decoded.binaryBytes,
-              binaryEncoding: decoded.binaryEncoding,
-              viewMode: decoded.viewMode,
-              editorSurface: decoded.editorSurface,
-              status: decoded.status,
-              stats: decoded.stats,
-              parsedJson: decoded.parsedJson,
+              decoded,
             }),
           );
           nextTabId.current += 1;
@@ -195,20 +186,10 @@ export function useFileImportActions({
         });
         const decoded = await decodeLoadableEntry(entry, preferredViewMode, preferredEditorSurface, t, runRtonDecodeInWorker);
         const tabId = nextTabId.current;
-        const tab = createEditorTabFromValue({
+        const tab = createEditorTabFromDecodedSource({
           id: tabId,
           fileName: entry.path,
-          value: decoded.value,
-          editorText: decoded.editorText,
-          surfaceNote: decoded.surfaceNote,
-          sourceBytes: decoded.sourceBytes,
-          binaryBytes: decoded.binaryBytes,
-          binaryEncoding: decoded.binaryEncoding,
-          viewMode: decoded.viewMode,
-          editorSurface: decoded.editorSurface,
-          status: decoded.status,
-          stats: decoded.stats,
-          parsedJson: decoded.parsedJson,
+          decoded,
         });
         nextTabId.current += 1;
         setLoadedFiles((files) => files.map((file) => (file.id === fileId ? { ...file, tabId } : file)));
@@ -284,23 +265,28 @@ async function decodeLoadableEntry(
   preferredViewMode: ViewMode,
   preferredEditorSurface: EditorSurface,
   t: Translator,
-  runRtonDecodeInWorker: (bytes: Uint8Array) => Promise<RtonDecodeWorkerOutput>,
+  runRtonDecodeInWorker: (bytes: Uint8Array, options?: { includeValue?: boolean; retainDocument?: boolean }) => Promise<RtonDecodeWorkerOutput>,
 ): Promise<DecodedLoadableSource> {
   if (entry.kind !== 'rton') {
     return decodeLoadableSource(entry, preferredViewMode, preferredEditorSurface, t);
   }
 
   const bytes = new Uint8Array(await entry.file.arrayBuffer());
-  const { value, stats, plainBytes, compact, encrypted } = await runRtonDecodeInWorker(bytes);
-  const useHexSurface = preferredEditorSurface === 'hex';
+  const largeDocument = bytes.byteLength >= RTON_LARGE_DOCUMENT_THRESHOLD_BYTES;
+  const { value, document, stats, plainBytes, compact, encrypted } = await runRtonDecodeInWorker(bytes, {
+    includeValue: !largeDocument,
+    retainDocument: largeDocument,
+  });
+  const useHexSurface = largeDocument || preferredEditorSurface === 'hex';
   const label = loadableFileKindLabel(preferredViewMode);
   const editorText = useHexSurface ? '' : t('format.generatingPreviewText', { label });
   const textSurfaceNote = useHexSurface ? t('app.notGenerated') : t('format.generatingPreview', { label });
 
   return {
     value,
+    rtonDocument: document,
     editorText,
-    surfaceNote: useHexSurface ? t('format.rtonEditable') : textSurfaceNote,
+    surfaceNote: largeDocument ? t('format.largeDocumentMode') : useHexSurface ? t('format.rtonEditable') : textSurfaceNote,
     sourceBytes: plainBytes,
     binaryBytes: plainBytes,
     binaryEncoding: { compact, encrypted: false },
@@ -312,8 +298,55 @@ async function decodeLoadableEntry(
     },
     stats,
     parsedJson: null,
-    needsTextPreview: !useHexSurface,
+    needsTextPreview: Boolean(value) && !useHexSurface,
   };
+}
+
+function createEditorTabFromDecodedSource({
+  id,
+  fileName,
+  decoded,
+}: {
+  id: number;
+  fileName: string;
+  decoded: DecodedLoadableSource;
+}) {
+  if (decoded.rtonDocument && !decoded.value) {
+    return createEditorTabFromDocument({
+      id,
+      fileName,
+      document: decoded.rtonDocument,
+      editorText: decoded.editorText,
+      surfaceNote: decoded.surfaceNote,
+      sourceBytes: decoded.sourceBytes,
+      binaryBytes: decoded.binaryBytes,
+      binaryEncoding: decoded.binaryEncoding,
+      viewMode: decoded.viewMode,
+      editorSurface: decoded.editorSurface,
+      status: decoded.status,
+    });
+  }
+
+  if (!decoded.value) {
+    throw new Error(decoded.status.message);
+  }
+
+  return createEditorTabFromValue({
+    id,
+    fileName,
+    value: decoded.value,
+    rtonDocument: decoded.rtonDocument ?? null,
+    editorText: decoded.editorText,
+    surfaceNote: decoded.surfaceNote,
+    sourceBytes: decoded.sourceBytes,
+    binaryBytes: decoded.binaryBytes,
+    binaryEncoding: decoded.binaryEncoding,
+    viewMode: decoded.viewMode,
+    editorSurface: decoded.editorSurface,
+    status: decoded.status,
+    stats: decoded.stats,
+    parsedJson: decoded.parsedJson,
+  });
 }
 
 function getPreferredPreview({

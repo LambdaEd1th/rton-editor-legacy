@@ -85,6 +85,8 @@ const messages: Record<string, MessageDict> = {
     'inspector.doneSummary': '{matches} 条匹配，扫描 {scanned} 个节点',
     'inspector.searchingSummary': '{matches} 条匹配，仍在搜索...',
     'inspector.noValue': '没有可浏览的 RtonValue',
+    'inspector.loading': '加载中...',
+    'inspector.loadMore': '加载更多（已显示 {shown} / {total}）',
     'inspector.truncated': '仅显示前 {shown} 项，共 {total} 项。请用搜索定位更深内容。',
     'inspector.chooseValueType': '选择 RtonValue 类型',
     'inspector.chooseBool': '选择布尔值',
@@ -163,6 +165,7 @@ const messages: Record<string, MessageDict> = {
     'format.jsonEditable': 'JSON 可编辑',
     'format.jsonNotGenerated': 'JSON 未生成',
     'format.rtonEditable': 'RTON 可编辑',
+    'format.largeDocumentMode': '大文件懒加载模式',
     'format.rtonParseUnavailable': 'RTON 无法解析',
     'format.exportable': '{label} 可导出',
 
@@ -309,6 +312,8 @@ const messages: Record<string, MessageDict> = {
     'inspector.doneSummary': '{matches} matches, scanned {scanned} nodes',
     'inspector.searchingSummary': '{matches} matches, still searching...',
     'inspector.noValue': 'No browsable RtonValue',
+    'inspector.loading': 'Loading...',
+    'inspector.loadMore': 'Load more ({shown} / {total} shown)',
     'inspector.truncated': 'Showing first {shown} of {total} items. Use search to locate deeper content.',
     'inspector.chooseValueType': 'Choose RtonValue type',
     'inspector.chooseBool': 'Choose boolean value',
@@ -387,6 +392,7 @@ const messages: Record<string, MessageDict> = {
     'format.jsonEditable': 'JSON editable',
     'format.jsonNotGenerated': 'JSON not generated',
     'format.rtonEditable': 'RTON editable',
+    'format.largeDocumentMode': 'Large file lazy mode',
     'format.rtonParseUnavailable': 'RTON cannot be parsed',
     'format.exportable': '{label} exportable',
 

@@ -38,6 +38,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
     listedFileCount,
     outputText,
     rightPanelWidth,
+    rtonDocument,
     searchQuery,
     searchState,
     selectedFileCount,
@@ -69,6 +70,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
     onFileSearchChange,
     onHexChange,
     onInspectorError,
+    onLoadDocumentChildren,
     onLanguageChange,
     onLineWrappingChange,
     onLoadSample,
@@ -193,6 +195,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
           <RightInspectorPanel
             t={t}
             currentValue={currentValue}
+            rtonDocument={rtonDocument}
             displayFileName={displayFileName}
             hasActiveFile={hasActiveFile}
             inputText={inputText}
@@ -201,6 +204,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
             searchState={searchState}
             stats={stats}
             onError={onInspectorError}
+            onLoadDocumentChildren={onLoadDocumentChildren}
             onNavigate={onRtonValueNavigate}
             onSearchChange={onSearchChange}
             onValueChange={onRtonValueUpdate}

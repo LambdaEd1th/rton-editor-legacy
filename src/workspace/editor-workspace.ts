@@ -5,6 +5,7 @@ import type { JsonValue, RtonBinaryEncoding, StatusState, ViewMode, EditorSurfac
 import type { RtonValue } from '../domain/rton-value';
 import type { Stats } from '../domain/rton-value-analysis';
 import type { SearchState } from '../domain/rton-value-editing';
+import type { RtonDocumentRef } from '../domain/rton-document';
 
 export type EditorTabSnapshotInput = {
   activeTabId: number | null;
@@ -13,6 +14,7 @@ export type EditorTabSnapshotInput = {
   binaryBytes: Uint8Array | null;
   binaryEncoding: RtonBinaryEncoding | null;
   currentValue: RtonValue | null;
+  rtonDocument: RtonDocumentRef | null;
   editorText: string;
   lastOutputBytes: number | null;
   parsedJson: JsonValue | null;
@@ -45,6 +47,7 @@ export function createActiveEditorTabSnapshot(input: EditorTabSnapshotInput): Ed
     binaryBytes: input.binaryBytes,
     binaryEncoding: input.binaryEncoding,
     currentValue: input.currentValue,
+    rtonDocument: input.rtonDocument,
     editorText: input.editorText,
     lastOutputBytes: input.lastOutputBytes,
     parsedJson: input.parsedJson,

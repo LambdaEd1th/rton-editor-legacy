@@ -16,6 +16,7 @@ import {
   value_to_json_text,
 } from '../wasm/rton-editor/rton_editor_wasm';
 import type { Stats } from './rton-value-analysis';
+import type { RtonDocumentRef } from './rton-document';
 
 export type JsonScalar = string | number | boolean | null;
 export type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
@@ -30,7 +31,8 @@ export type RtonBinaryEncoding = {
 };
 
 export type DecodedLoadableSource = {
-  value: RtonValue;
+  value: RtonValue | null;
+  rtonDocument?: RtonDocumentRef | null;
   editorText: string;
   surfaceNote: string;
   sourceBytes: Uint8Array | null;

@@ -105,6 +105,7 @@ export function useRtonEditorController() {
     lastOutputBytes,
     parseError,
     parsedJson,
+    rtonDocument,
     setBinaryBytes,
     setBinaryEncoding,
     setCompactOutput,
@@ -118,6 +119,7 @@ export function useRtonEditorController() {
     setLastOutputBytes,
     setParseError,
     setParsedJson,
+    setRtonDocument,
     setSourceBytes,
     setStats,
     setStatus,
@@ -131,6 +133,20 @@ export function useRtonEditorController() {
     viewMode,
     viewModeRef,
   } = useActiveEditorState({ activeTabId, initialViewMode: previewPreferenceTextMode(previewPreference), t });
+  const { runByteTransformInWorker, runByteTransformSizeInWorker } = useByteTransformWorker({
+    t,
+    onError: (message) => updateStatus(message, 'error'),
+  });
+  const {
+    getRtonDocumentChildren,
+    locateRtonDocumentOffset,
+    releaseRtonDocument,
+    runRtonDecodeInWorker,
+    searchRtonDocument,
+  } = useRtonDecodeWorker({
+    t,
+    onError: (message) => updateStatus(message, 'error'),
+  });
   const {
     cancelSearch,
     searchQuery,
@@ -142,6 +158,8 @@ export function useRtonEditorController() {
     currentValue,
     debounceMs: SEARCH_DEBOUNCE_MS,
     parseError,
+    rtonDocument,
+    searchRtonDocument,
     t,
   });
   const themeOptions = useMemo<Array<RtonInlineSelectOption<ThemePreference>>>(
@@ -156,15 +174,6 @@ export function useRtonEditorController() {
     () => langs.map((value) => ({ value, label: getLangLabel(value) })),
     [getLangLabel, lang, langs],
   );
-
-  const { runByteTransformInWorker, runByteTransformSizeInWorker } = useByteTransformWorker({
-    t,
-    onError: (message) => updateStatus(message, 'error'),
-  });
-  const { runRtonDecodeInWorker } = useRtonDecodeWorker({
-    t,
-    onError: (message) => updateStatus(message, 'error'),
-  });
 
   const {
     clearParseTimer,
@@ -211,6 +220,7 @@ export function useRtonEditorController() {
         binaryBytes,
         binaryEncoding,
         currentValue: currentValueRef.current,
+        rtonDocument,
         editorText,
         lastOutputBytes,
         parsedJson,
@@ -233,6 +243,7 @@ export function useRtonEditorController() {
       lastOutputBytes,
       parseError,
       parsedJson,
+      rtonDocument,
       searchQuery,
       searchState,
       sourceBytes,
@@ -255,6 +266,7 @@ export function useRtonEditorController() {
       setBinaryBytes(null);
       setBinaryEncoding(null);
       setCurrentValueState(null);
+      setRtonDocument(null);
       setEditorTextState('');
       setEditorJumpTarget(null);
       setHexJumpTarget(null);
@@ -270,7 +282,7 @@ export function useRtonEditorController() {
       setEditorSearchPanelVisible(false);
       setStatus(nextStatus);
     },
-    [clearPendingWork, previewPreference, setCurrentValueState, t],
+    [clearPendingWork, previewPreference, setCurrentValueState, setRtonDocument, t],
   );
 
   const restoreEditorTab = useCallback(
@@ -284,6 +296,7 @@ export function useRtonEditorController() {
       setBinaryBytes(tab.binaryBytes);
       setBinaryEncoding(tab.binaryEncoding);
       setCurrentValueState(tab.currentValue);
+      setRtonDocument(tab.rtonDocument);
       setEditorTextState(tab.editorText);
       setEditorJumpTarget(null);
       setHexJumpTarget(null);
@@ -298,7 +311,7 @@ export function useRtonEditorController() {
       setSearchState(tab.searchState);
       setStatus(tab.status);
     },
-    [clearPendingWork, setCurrentValueState],
+    [clearPendingWork, setCurrentValueState, setRtonDocument],
   );
 
   const syncActiveTab = useCallback(
@@ -346,11 +359,15 @@ export function useRtonEditorController() {
   const closeEditorTab = useCallback(
     (tabId: number) => {
       const syncedTabs = syncActiveTab();
+      const closingDocument = syncedTabs.find((tab) => tab.id === tabId)?.rtonDocument ?? null;
       const result = closeEditorTabState(syncedTabs, tabId, activeTabId);
       if (!result.closed) {
         return;
       }
 
+      if (closingDocument) {
+        void releaseRtonDocument(closingDocument.id).catch(() => undefined);
+      }
       setLoadedFiles((files) => unlinkLoadedFileTab(files, tabId));
 
       if (result.nextTabs.length === 0) {
@@ -364,7 +381,7 @@ export function useRtonEditorController() {
         restoreEditorTab(result.nextActive);
       }
     },
-    [activeTabId, restoreEditorTab, restoreEmptyWorkspace, syncActiveTab, t],
+    [activeTabId, releaseRtonDocument, restoreEditorTab, restoreEmptyWorkspace, syncActiveTab, t],
   );
 
   const moveEditorTab = useCallback(
@@ -519,6 +536,7 @@ export function useRtonEditorController() {
 
     setBinaryBytes(null);
     setBinaryEncoding(null);
+    setRtonDocument(null);
     setEditorTextState(value);
     scheduleEditorParse(viewModeRef.current, value);
   };
@@ -628,6 +646,49 @@ export function useRtonEditorController() {
     viewModeRef,
   });
 
+  const navigateInspectorNode = useCallback(
+    (path: Parameters<typeof navigateToRtonValueNode>[0]) => {
+      if (!rtonDocument || currentValueRef.current) {
+        navigateToRtonValueNode(path);
+        return;
+      }
+
+      if (!binaryBytes) {
+        updateStatus(t('status.noJumpBytes'), 'warn');
+        return;
+      }
+
+      void locateRtonDocumentOffset(rtonDocument.id, path)
+        .then((offset) => {
+          if (offset === null) {
+            updateStatus(t('status.offsetNotFound'), 'warn');
+            return;
+          }
+          setEditorSurface('hex');
+          setHexJumpTarget({
+            id: nextHexJumpId.current,
+            offset,
+          });
+          nextHexJumpId.current += 1;
+          updateStatus(t('status.jumpedOffset', { offset: offset.toString(16).toUpperCase() }), 'ok');
+        })
+        .catch((error: unknown) => {
+          updateStatus(errorMessage(error), 'error');
+        });
+    },
+    [
+      binaryBytes,
+      currentValueRef,
+      locateRtonDocumentOffset,
+      navigateToRtonValueNode,
+      rtonDocument,
+      setEditorSurface,
+      setHexJumpTarget,
+      t,
+      updateStatus,
+    ],
+  );
+
   const runEditorToolbarAction = useCallback(
     (kind: EditorShortcutKind) => {
       if (!hasActiveFile) {
@@ -664,7 +725,7 @@ export function useRtonEditorController() {
       ? formatBytes(sourceBytes.byteLength)
       : t('app.textInput')
     : t('app.noOutput');
-  const canOpenHexEditor = hasActiveFile && Boolean(binaryBytes || currentValue);
+  const canOpenHexEditor = hasActiveFile && Boolean(binaryBytes || currentValue || rtonDocument);
 
   const onCompactOutputChange = useCallback(
     (checked: boolean) => {
@@ -758,6 +819,7 @@ export function useRtonEditorController() {
     listedFileCount,
     outputText,
     rightPanelWidth,
+    rtonDocument,
     searchQuery,
     searchState,
     selectedFileCount,
@@ -788,6 +850,7 @@ export function useRtonEditorController() {
     onEncryptOutputChange,
     onHexChange: onHexBytesChange,
     onInspectorError,
+    onLoadDocumentChildren: getRtonDocumentChildren,
     onLanguageChange: setLang,
     onLineWrappingChange: setLineWrapping,
     onLoadSample: loadSample,
@@ -797,7 +860,7 @@ export function useRtonEditorController() {
     onOpenFolder: loadRtonFolder,
     onOpenHexEditor: openPreferredHexEditor,
     onResizePanel: resizePanel,
-    onRtonValueNavigate: navigateToRtonValueNode,
+    onRtonValueNavigate: navigateInspectorNode,
     onRtonValueUpdate: updateRtonValueNode,
     onSearchChange: setSearchQuery,
     onSelectAllListedFiles: selectAllListedFiles,

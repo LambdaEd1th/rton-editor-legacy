@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -17,6 +18,9 @@ import {
   updateRtonScalarText,
 } from '../../domain/rton-value-editing';
 import { RtonInlineSelect } from './RtonInlineSelect';
+import type { RemoteRtonValueNode, RtonDocumentRef } from '../../domain/rton-document';
+import { RTON_REMOTE_CHILD_PAGE_SIZE } from '../../domain/rton-document';
+import type { RtonDocumentChildrenOutput } from '../../hooks/worker-clients';
 
 const VALUE_TREE_CHILD_LIMIT = 160;
 
@@ -48,14 +52,18 @@ const RTON_VALUE_KIND_OPTIONS = RTON_VALUE_KINDS.map((kind) => ({ value: kind, l
 export function RtonValueInspector({
   state,
   value,
+  document,
   searchMatchLimit,
+  loadDocumentChildren,
   onChange,
   onNavigate,
   onError,
 }: {
   state: SearchState;
   value: RtonValue | null;
+  document?: RtonDocumentRef | null;
   searchMatchLimit: number;
+  loadDocumentChildren?: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
   onChange: (path: RtonValuePath, value: RtonValue) => void;
   onNavigate: (path: RtonValuePath) => void;
   onError: (message: string) => void;
@@ -104,11 +112,157 @@ export function RtonValueInspector({
     );
   }
 
+  if (!value && document && loadDocumentChildren) {
+    return <RemoteRtonValueTree document={document} loadChildren={loadDocumentChildren} onNavigate={onNavigate} onError={onError} />;
+  }
+
   if (!value) {
     return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">{t('inspector.noValue')}</div>;
   }
 
   return <RtonValueTreeNode label="$" value={value} path={[]} depth={0} onChange={onChange} onNavigate={onNavigate} onError={onError} />;
+}
+
+function RemoteRtonValueTree({
+  document,
+  loadChildren,
+  onNavigate,
+  onError,
+}: {
+  document: RtonDocumentRef;
+  loadChildren: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
+  onNavigate: (path: RtonValuePath) => void;
+  onError: (message: string) => void;
+}) {
+  return (
+    <RemoteRtonValueTreeNode
+      documentId={document.id}
+      node={document.root}
+      depth={0}
+      loadChildren={loadChildren}
+      onNavigate={onNavigate}
+      onError={onError}
+    />
+  );
+}
+
+function RemoteRtonValueTreeNode({
+  documentId,
+  node,
+  depth,
+  loadChildren,
+  onNavigate,
+  onError,
+}: {
+  documentId: number;
+  node: RemoteRtonValueNode;
+  depth: number;
+  loadChildren: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
+  onNavigate: (path: RtonValuePath) => void;
+  onError: (message: string) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(depth === 0);
+  const [children, setChildren] = useState<RemoteRtonValueNode[]>([]);
+  const [total, setTotal] = useState(node.childCount);
+  const [loading, setLoading] = useState(false);
+  const loadingRef = useRef(false);
+  const hasChildren = node.childCount > 0;
+
+  const requestChildren = (offset: number) => {
+    if (!hasChildren || loadingRef.current) {
+      return;
+    }
+    loadingRef.current = true;
+    setLoading(true);
+    loadChildren(documentId, node.path, offset, RTON_REMOTE_CHILD_PAGE_SIZE)
+      .then((result) => {
+        setTotal(result.total);
+        setChildren((current) => (offset === 0 ? result.nodes : [...current, ...result.nodes]));
+      })
+      .catch((error: unknown) => onError(errorMessage(error)))
+      .finally(() => {
+        loadingRef.current = false;
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    if (open && hasChildren && children.length === 0 && !loading) {
+      requestChildren(0);
+    }
+  });
+
+  if (hasChildren) {
+    return (
+      <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="my-0.5">
+        <summary className="cursor-pointer rounded px-1 py-1 hover:bg-[var(--color-control-hover)]">
+          <RemoteNodeLabel node={node} onNavigate={onNavigate} />
+        </summary>
+        {open && (
+          <div className="rton-value-tree-children" style={{ '--rton-value-depth': depth + 1 } as CSSProperties}>
+            {children.map((child, index) => (
+              <RemoteRtonValueTreeNode
+                key={`${child.label}:${index}`}
+                documentId={documentId}
+                node={child}
+                depth={depth + 1}
+                loadChildren={loadChildren}
+                onNavigate={onNavigate}
+                onError={onError}
+              />
+            ))}
+            {loading && <div className="py-1 text-[var(--color-text-muted)]">{t('inspector.loading')}</div>}
+            {!loading && children.length < total && (
+              <button
+                type="button"
+                className="my-1 rounded border border-[var(--color-border)] bg-[var(--color-control)] px-2 py-1 text-left text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)]"
+                onClick={() => requestChildren(children.length)}
+              >
+                {t('inspector.loadMore', {
+                  shown: children.length.toLocaleString(),
+                  total: total.toLocaleString(),
+                })}
+              </button>
+            )}
+          </div>
+        )}
+      </details>
+    );
+  }
+
+  return (
+    <div className="rton-value-scalar-row" onClick={() => onNavigate(node.path)}>
+      <RemoteNodeLabel node={node} onNavigate={onNavigate} />
+    </div>
+  );
+}
+
+function RemoteNodeLabel({
+  node,
+  onNavigate,
+}: {
+  node: RemoteRtonValueNode;
+  onNavigate: (path: RtonValuePath) => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        className="rton-value-node-link"
+        onClick={(event) => {
+          event.stopPropagation();
+          onNavigate(node.path);
+        }}
+      >
+        {node.label}
+      </button>
+      <span className="ml-2 rounded border border-[var(--color-border)] bg-[var(--color-control)] px-2 py-0.5 text-[var(--color-text-muted)]">
+        {node.kind}
+      </span>
+      <span className="ml-2 text-[var(--color-text-muted)]">{node.preview}</span>
+    </>
+  );
 }
 
 function RtonValueTreeNode({
