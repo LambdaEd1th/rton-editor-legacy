@@ -220,6 +220,7 @@ const messages: Record<string, MessageDict> = {
     'hexInspector.asciiRun': '附近 ASCII',
     'hexInspector.unknownTag': '不是已知 RTON tag',
     'hexInspector.empty': '点击 Hex 或 ASCII 字节查看信息',
+    'hexInspector.resize': '调整字节信息面板宽度',
   },
 
   en: {
@@ -438,6 +439,7 @@ const messages: Record<string, MessageDict> = {
     'hexInspector.asciiRun': 'Nearby ASCII',
     'hexInspector.unknownTag': 'Not a known RTON tag',
     'hexInspector.empty': 'Click a Hex or ASCII byte to inspect it',
+    'hexInspector.resize': 'Resize byte info panel',
   },
 };
 

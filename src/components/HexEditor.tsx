@@ -70,6 +70,9 @@ const HEX_SEARCH_FRAME_BUDGET_MS = 8;
 const MAX_VIRTUAL_SCROLL_HEIGHT = 8_000_000;
 const HEX_HISTORY_LIMIT = 24;
 const HEX_CHAR_RE = /^[0-9a-fA-F]$/;
+const HEX_INSPECTOR_DEFAULT_WIDTH = 310;
+const HEX_INSPECTOR_MIN_WIDTH = 220;
+const HEX_INSPECTOR_MAX_WIDTH = 620;
 
 export function HexEditor({
   bytes,
@@ -91,6 +94,7 @@ export function HexEditor({
   const expectedBytesRef = useRef<Uint8Array | null>(null);
   const isPointerSelecting = useRef(false);
   const selectionAnchorRef = useRef(0);
+  const inspectorResizeStart = useRef({ x: 0, width: HEX_INSPECTOR_DEFAULT_WIDTH });
   const searchRunId = useRef(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -98,6 +102,8 @@ export function HexEditor({
   const [selectionRange, setSelectionRange] = useState<ByteSelection | null>(null);
   const [pendingEdit, setPendingEdit] = useState<PendingHexEdit | null>(null);
   const [insertMode, setInsertMode] = useState(false);
+  const [hexInspectorWidth, setHexInspectorWidth] = useState(HEX_INSPECTOR_DEFAULT_WIDTH);
+  const [inspectorResizing, setInspectorResizing] = useState(false);
   const [searchMode, setSearchMode] = useState<HexSearchMode>('hex');
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
@@ -1146,6 +1152,18 @@ export function HexEditor({
     [readOnly, replaceSelectionWithBytes, setByteRange],
   );
 
+  const resizeHexInspector = useCallback((clientX: number) => {
+    const delta = inspectorResizeStart.current.x - clientX;
+    setHexInspectorWidth(clampNumber(inspectorResizeStart.current.width + delta, HEX_INSPECTOR_MIN_WIDTH, HEX_INSPECTOR_MAX_WIDTH));
+  }, []);
+
+  const finishHexInspectorResize = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    setInspectorResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
   useEffect(() => {
     if (!jumpTarget) {
       return;
@@ -1163,6 +1181,7 @@ export function HexEditor({
     '--rton-hex-columns': String(bytesPerRow),
     '--rton-hex-offset-width': `${offsetColumnWidth}ch`,
     '--rton-hex-ascii-width': `${bytesPerRow}ch`,
+    '--rton-hex-inspector-width': `${hexInspectorWidth}px`,
   } as CSSProperties;
   const searchControlsDisabled = searchMatches.pending || !searchPattern.valid || searchMatches.matches.length === 0;
   const replaceControlsDisabled = searchControlsDisabled || !replacePattern.valid;
@@ -1343,6 +1362,26 @@ export function HexEditor({
             </div>
           </div>
         </div>
+        <div
+          className={classNames('rton-hex-inspector-resize-handle', inspectorResizing && 'dragging')}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t('hexInspector.resize')}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            inspectorResizeStart.current = { x: event.clientX, width: hexInspectorWidth };
+            setInspectorResizing(true);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!inspectorResizing) {
+              return;
+            }
+            resizeHexInspector(event.clientX);
+          }}
+          onPointerUp={finishHexInspectorResize}
+          onPointerCancel={finishHexInspectorResize}
+        />
         <HexByteInspector inspection={byteInspection} />
       </div>
       {searchPanelVisible && (
