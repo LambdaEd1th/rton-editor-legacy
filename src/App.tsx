@@ -22,14 +22,7 @@ import {
   Square,
   Undo2,
 } from 'lucide-react';
-import init, {
-  decode_rton_to_value,
-  decrypt_rton_data,
-  encode_value_to_rton,
-  encrypt_rton_data,
-  json_text_to_value,
-  value_to_json_text,
-} from './wasm/rton-editor/rton_editor_wasm';
+import init from './wasm/rton-editor/rton_editor_wasm';
 import { CodeEditor, type EditorJumpTarget } from './components/CodeEditor';
 import { DraggableToolbar, type ToolbarGroupConfig, type ToolbarGroupId } from './components/DraggableToolbar';
 import { EditorTabStrip, reorderTabs, type TabDropPlacement } from './components/EditorTabStrip';
@@ -40,9 +33,6 @@ import type { StructuredFormatMode } from './format-conversion';
 import { useI18n } from './localization/use-i18n';
 import { t as translate, type Translator } from './localization/i18n';
 import {
-  decodeRtonValueWire,
-  encodeRtonValueWire,
-  rtonValueToPlain,
   type RtonValue,
 } from './rton-value';
 import { sampleJson } from './sample';
@@ -68,7 +58,6 @@ import {
   normalizeDisplayPath,
   splitDisplayPath,
   type DirectoryPickerWindow,
-  type LoadableFileCandidate,
   type LoadableFileKind,
   type RtonLoadEntry,
 } from './file-loading';
@@ -80,14 +69,27 @@ import {
   timestampForFileName,
 } from './file-export';
 import { createBatchExportArchive, type BatchExportMode, type BatchStructuredFormatter } from './batch-export';
+import {
+  decodeLoadableSource,
+  decodeRtonSourceValue,
+  encodeRtonOutputBytes,
+  formatRtonEncoding,
+  isEncryptedRtonBytes,
+  isPendingTextPreview,
+  jsonPreviewUnavailableText,
+  parseJsonTextToRtonValue,
+  rtonValueToJsonText,
+  rtonValueToJsonValue,
+  sameRtonEncoding,
+  type EditorSurface,
+  type JsonValue,
+  type RtonBinaryEncoding,
+  type StatusState,
+  type Tone,
+  type ViewMode,
+} from './rton-codec';
 
-type JsonScalar = string | number | boolean | null;
-type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
-type ViewMode = 'json' | 'yaml' | 'toml';
-type EditorSurface = 'text' | 'hex';
 type ThemePreference = 'system' | 'light' | 'dark';
-type Tone = 'ok' | 'warn' | 'error';
-type StatusState = { message: string; tone: Tone };
 
 type EditorTab = {
   id: number;
@@ -141,11 +143,6 @@ type FormatWorkerResponse =
       ok: false;
       error: string;
     };
-
-type RtonBinaryEncoding = {
-  compact: boolean;
-  encrypted: boolean;
-};
 
 type ByteTransformWorkerResponse =
   | {
@@ -2221,169 +2218,6 @@ function filterLoadedFileItems(items: LoadedFileTreeItem[], query: string) {
     const haystack = `${item.path}\n${item.name}\n${item.detail}`.toLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
-}
-
-function isEncryptedRtonBytes(bytes: Uint8Array) {
-  return bytes.length >= 2 && bytes[0] === 0x10 && bytes[1] === 0x00;
-}
-
-function isCompactRtonBytes(bytes: Uint8Array) {
-  if (bytes.length < 9 || bytes[0] !== 0x52 || bytes[1] !== 0x54 || bytes[2] !== 0x4f || bytes[3] !== 0x4e) {
-    return false;
-  }
-  const versionHigh = bytes[6] | (bytes[7] << 8);
-  return versionHigh === 1 && bytes[8] === 0xb8;
-}
-
-function sameRtonEncoding(left: RtonBinaryEncoding, right: RtonBinaryEncoding) {
-  return left.compact === right.compact && left.encrypted === right.encrypted;
-}
-
-function formatRtonEncoding(encoding: RtonBinaryEncoding, t?: Translator) {
-  const encryptedLabel = t ? t('toolbar.encrypted') : translate('toolbar.encrypted');
-  return `${encoding.compact ? 'Compact' : 'Standard'}${encoding.encrypted ? ` · ${encryptedLabel}` : ''}`;
-}
-
-function parseJsonTextToRtonValue(json: string) {
-  return decodeRtonValueWire(json_text_to_value(json));
-}
-
-function rtonValueToJsonText(value: RtonValue, pretty: boolean) {
-  return value_to_json_text(encodeRtonValueWire(value), pretty);
-}
-
-function encodeRtonOutputBytes(value: RtonValue, compact: boolean, encrypted: boolean) {
-  const bytes = encode_value_to_rton(encodeRtonValueWire(value), compact);
-  return encrypted ? encrypt_rton_data(bytes) : bytes;
-}
-
-function jsonPreviewUnavailableText(message: string, t: Translator = translate) {
-  return t('format.previewUnavailableText', { label: 'JSON', message });
-}
-
-function isPendingTextPreview(text: string) {
-  return text === translate('format.generatingPreviewText', { label: 'JSON' })
-    || text === translate('format.generatingPreviewText', { label: 'YAML' })
-    || text === translate('format.generatingPreviewText', { label: 'TOML' })
-    || (text.startsWith('正在后台生成 ') && text.endsWith(' 预览...'))
-    || (text.startsWith('Generating ') && text.endsWith(' preview in the background...'));
-}
-
-function rtonValueToJsonValue(value: RtonValue) {
-  return rtonValueToPlain(value) as JsonValue;
-}
-
-function decodeRtonSourceValue(bytes: Uint8Array, renderJsonPreview = true, t: Translator = translate) {
-  const encrypted = isEncryptedRtonBytes(bytes);
-  const plainBytes = encrypted ? decrypt_rton_data(bytes) : bytes;
-  const compact = isCompactRtonBytes(plainBytes);
-  const wire = decode_rton_to_value(plainBytes);
-  let editorText: string;
-  let surfaceNote: string;
-  if (renderJsonPreview) {
-    try {
-      editorText = value_to_json_text(wire, true);
-      surfaceNote = t('format.jsonEditable');
-    } catch (error) {
-      editorText = jsonPreviewUnavailableText(errorMessage(error), t);
-      surfaceNote = t('format.jsonPreviewUnavailable');
-    }
-  } else {
-    editorText = '';
-    surfaceNote = t('format.jsonNotGenerated');
-  }
-
-  return {
-    value: decodeRtonValueWire(wire),
-    editorText,
-	    surfaceNote,
-	    compact,
-	    encrypted,
-	  };
-}
-
-async function decodeLoadableSource(
-  candidate: LoadableFileCandidate,
-  preferredViewMode: ViewMode = 'json',
-  preferredEditorSurface: EditorSurface = 'hex',
-  t: Translator = translate,
-) {
-  if (candidate.kind === 'rton') {
-    const bytes = new Uint8Array(await candidate.file.arrayBuffer());
-    const useHexSurface = preferredEditorSurface === 'hex';
-	    const { value, encrypted, compact } = decodeRtonSourceValue(bytes, false, t);
-	    const binaryEncoding = { compact, encrypted };
-    const label = loadableFileKindLabel(preferredViewMode);
-    const editorText = useHexSurface ? '' : t('format.generatingPreviewText', { label });
-    const textSurfaceNote = useHexSurface ? t('app.notGenerated') : t('format.generatingPreview', { label });
-    if (preferredViewMode === 'json') {
-      return {
-        value,
-        editorText,
-        surfaceNote: useHexSurface ? t('format.rtonEditable') : textSurfaceNote,
-	        sourceBytes: bytes,
-	        binaryBytes: bytes,
-	        binaryEncoding,
-	        viewMode: 'json' as const,
-        editorSurface: useHexSurface ? ('hex' as const) : ('text' as const),
-        status: { message: encrypted ? t('status.encryptedRtonParsed') : t('format.parsed', { label: 'RTON' }), tone: 'ok' as const },
-        needsTextPreview: !useHexSurface,
-      };
-    }
-
-	    let preferredEditorText: string;
-	    let preferredSurfaceNote: string;
-	    if (useHexSurface) {
-	      preferredEditorText = '';
-	      preferredSurfaceNote = t('app.notGenerated');
-	    } else {
-	      preferredEditorText = editorText;
-	      preferredSurfaceNote = textSurfaceNote;
-	    }
-
-    return {
-      value,
-      editorText: preferredEditorText,
-      surfaceNote: useHexSurface ? t('format.rtonEditable') : preferredSurfaceNote,
-	      sourceBytes: bytes,
-	      binaryBytes: bytes,
-	      binaryEncoding,
-		      viewMode: preferredViewMode,
-	      editorSurface: useHexSurface ? ('hex' as const) : ('text' as const),
-	      status: { message: encrypted ? t('status.encryptedRtonParsed') : t('format.parsed', { label: 'RTON' }), tone: 'ok' as const },
-	      needsTextPreview: !useHexSurface,
-	    };
-  }
-
-  const text = await candidate.file.text();
-  if (candidate.kind === 'json') {
-    return {
-      value: parseJsonTextToRtonValue(text),
-      editorText: text,
-      surfaceNote: t('format.jsonEditable'),
-	      sourceBytes: null,
-	      binaryBytes: null,
-	      binaryEncoding: null,
-	      viewMode: 'json' as const,
-      editorSurface: 'text' as const,
-      status: { message: t('format.parsed', { label: 'JSON' }), tone: 'ok' as const },
-    };
-  }
-
-  const { parseStructuredText } = await import('./format-conversion');
-  const { value } = parseStructuredText(text, candidate.kind);
-  const label = loadableFileKindLabel(candidate.kind);
-  return {
-    value,
-    editorText: text,
-    surfaceNote: t('format.editable', { label }),
-	    sourceBytes: null,
-	    binaryBytes: null,
-	    binaryEncoding: null,
-	    viewMode: candidate.kind,
-    editorSurface: 'text' as const,
-    status: { message: t('format.parsed', { label }), tone: 'ok' as const },
-  };
 }
 
 function clampPanelWidth(width: number) {
