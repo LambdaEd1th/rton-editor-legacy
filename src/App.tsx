@@ -28,10 +28,10 @@ import type { RtonInlineSelectOption } from './components/RtonInlineSelect';
 import {
   replaceRtonValueAtPath,
   type RtonValuePath,
-  type SearchState,
 } from './rton-value-editing';
 import { locateRtonPathInText } from './rton-text-locator';
-import { collectStats, emptyStats, runChunkedSearch } from './rton-value-analysis';
+import { collectStats, emptyStats } from './rton-value-analysis';
+import { useRtonValueSearch } from './rton-value-search';
 import {
   collectDirectoryEntries,
   collectDroppedEntries,
@@ -144,8 +144,6 @@ export function App() {
   const [surfaceNote, setSurfaceNote] = useState(() => t('app.waitingFile'));
   const [status, setStatus] = useState<StatusState>(() => ({ message: t('status.wasmInitializing'), tone: 'warn' }));
   const [fileSearchQuery, setFileSearchQuery] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchState, setSearchState] = useState<SearchState>(() => ({ kind: 'message', message: t('app.emptyFile') }));
   const [dragging, setDragging] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
@@ -160,8 +158,19 @@ export function App() {
   const currentValueRef = useRef<RtonValue | null>(currentValue);
   const viewModeRef = useRef<ViewMode>(viewMode);
   const parseTimer = useRef<number | null>(null);
-  const searchTimer = useRef<number | null>(null);
-  const activeSearchId = useRef(0);
+  const {
+    cancelSearch,
+    searchQuery,
+    searchState,
+    setSearchQuery,
+    setSearchState,
+  } = useRtonValueSearch({
+    activeTabId,
+    currentValue,
+    debounceMs: SEARCH_DEBOUNCE_MS,
+    parseError,
+    t,
+  });
   const themeOptions = useMemo<Array<RtonInlineSelectOption<ThemePreference>>>(
     () => [
       { value: 'system', label: t('theme.system') },
@@ -266,13 +275,9 @@ export function App() {
 
   const clearPendingWork = useCallback(() => {
     clearParseTimer();
-    if (searchTimer.current !== null) {
-      window.clearTimeout(searchTimer.current);
-      searchTimer.current = null;
-    }
-    activeSearchId.current += 1;
+    cancelSearch();
     invalidateFormatWork();
-  }, [clearParseTimer, invalidateFormatWork]);
+  }, [cancelSearch, clearParseTimer, invalidateFormatWork]);
 
   const snapshotActiveTab = useCallback(
     () =>
@@ -451,7 +456,7 @@ export function App() {
   const parseJsonText = useCallback(
     (jsonText: string, options: { updateEditor?: boolean; statusMessage?: string } = {}) => {
       clearParseTimer();
-      activeSearchId.current += 1;
+      cancelSearch();
 
       if (!wasmReady) {
         updateStatus(t('status.wasmStillLoading'), 'warn');
@@ -482,7 +487,7 @@ export function App() {
         updateStatus(message, 'error');
       }
     },
-    [clearParseTimer, setCurrentValueState, t, updateStatus, wasmReady],
+    [cancelSearch, clearParseTimer, setCurrentValueState, t, updateStatus, wasmReady],
   );
 
 	  const renderTextForValue = useCallback(
@@ -556,7 +561,7 @@ export function App() {
   const scheduleEditorParse = useCallback(
     (mode: ViewMode, text: string) => {
       clearParseTimer();
-      activeSearchId.current += 1;
+      cancelSearch();
       setLastOutputBytes(null);
       if (mode === 'json') {
         setSearchState({ kind: 'message', message: t('format.waitJsonParse') });
@@ -572,7 +577,7 @@ export function App() {
         }, EDITOR_PARSE_DEBOUNCE_MS);
       }
     },
-    [clearParseTimer, parseAlternateFormat, parseJsonText, t],
+    [cancelSearch, clearParseTimer, parseAlternateFormat, parseJsonText, t],
   );
 
   const setViewMode = useCallback(
@@ -741,9 +746,6 @@ export function App() {
       if (parseTimer.current !== null) {
         window.clearTimeout(parseTimer.current);
       }
-      if (searchTimer.current !== null) {
-        window.clearTimeout(searchTimer.current);
-      }
     };
   }, [t, updateStatus]);
 
@@ -752,41 +754,6 @@ export function App() {
       validateValue();
     }
   }, [activeTabId, validateValue, wasmReady]);
-
-  useEffect(() => {
-    if (searchTimer.current !== null) {
-      window.clearTimeout(searchTimer.current);
-    }
-    activeSearchId.current += 1;
-
-    if (activeTabId === null) {
-      setSearchState({ kind: 'message', message: t('app.emptyFile') });
-      return;
-    }
-
-    const query = searchQuery.trim().toLowerCase();
-    if (parseError) {
-      setSearchState({ kind: 'message', message: parseError });
-      return;
-    }
-
-    if (!currentValue) {
-      setSearchState({ kind: 'message', message: t('status.noSearchableValue') });
-      return;
-    }
-
-    if (!query) {
-      setSearchState({ kind: 'idle' });
-      return;
-    }
-
-    setSearchState({ kind: 'message', message: t('status.searching', { query }) });
-    const searchId = activeSearchId.current + 1;
-    activeSearchId.current = searchId;
-    searchTimer.current = window.setTimeout(() => {
-      runChunkedSearch(currentValue, query, searchId, activeSearchId, setSearchState);
-    }, SEARCH_DEBOUNCE_MS);
-  }, [activeTabId, currentValue, parseError, searchQuery, t]);
 
 	  const loadedFileItems = useMemo(
     () => buildLoadedFileItems({ files: loadedFiles, tabs, activeTabId, fileName, sourceBytes, viewMode, editorSurface, t }),
