@@ -1,6 +1,6 @@
-# RTON Editor
+# RTON Editor Legacy
 
-RTON Editor is a browser-based editor for PopCap/PvZ2 RTON files. It combines a
+RTON Editor Legacy is a browser-based editor for PopCap/PvZ2 RTON files. It combines a
 Rust `wasm-bindgen` bridge around [`serde_rton`](https://github.com/LambdaEd1th/serde_rton)
 with a React, Vite, TypeScript, Tailwind CSS frontend.
 
@@ -79,5 +79,5 @@ JSON cannot, so JSON preview/export reports an error for those values.
 
 ## License
 
-RTON Editor is licensed under the GNU Affero General Public License v3.0 or
+RTON Editor Legacy is licensed under the GNU Affero General Public License v3.0 or
 later. See [LICENSE](./LICENSE) for the full license text.

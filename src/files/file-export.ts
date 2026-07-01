@@ -124,7 +124,7 @@ export function timestampForFileName() {
 }
 
 export function yieldToBrowser() {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  return new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
 }
 
 export function formatBytes(bytes: number) {

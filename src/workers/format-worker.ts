@@ -1,8 +1,16 @@
 import { formatStructuredText, parseStructuredText, type StructuredFormatMode } from '../domain/format-conversion';
-import { rtonValueToPlain, type RtonValue } from '../domain/rton-value';
+import { collectStats, type Stats } from '../domain/rton-value-analysis';
+import {
+  decodeRtonValueWire,
+  rtonValueToPlain,
+  type RtonValue,
+} from '../domain/rton-value';
+import init, {
+  json_text_to_value,
+} from '../wasm/rton-editor/rton_editor_wasm';
 
 type FormatMode = 'json' | StructuredFormatMode;
-type ParseMode = StructuredFormatMode;
+type ParseMode = FormatMode;
 
 type FormatRequest =
   | {
@@ -16,6 +24,12 @@ type FormatRequest =
       id: number;
       mode: ParseMode;
       text: string;
+    }
+  | {
+      action: 'exportText';
+      id: number;
+      value: RtonValue;
+      mode: FormatMode;
     };
 
 type FormatResponse =
@@ -33,10 +47,17 @@ type FormatResponse =
       mode: ParseMode;
       ok: true;
       value: RtonValue;
-      plainValue: unknown;
+      stats: Stats;
     }
   | {
-      action: 'format' | 'parse';
+      action: 'exportText';
+      id: number;
+      mode: FormatMode;
+      ok: true;
+      bytes: Uint8Array;
+    }
+  | {
+      action: 'format' | 'parse' | 'exportText';
       id: number;
       mode: FormatMode;
       ok: false;
@@ -56,16 +77,27 @@ const TRUNCATED_SUFFIX: Record<FormatMode, string> = {
   yaml: '\n\n# Preview truncated.',
   toml: '\n\n# Preview truncated.',
 };
+let wasmReady: Promise<void> | null = null;
 
 self.addEventListener('message', (event: MessageEvent<FormatRequest>) => {
-  const request = event.data;
-  const { id, mode } = request;
+  void handleRequest(event.data);
+});
 
+async function handleRequest(request: FormatRequest) {
+  const { id, mode } = request;
   try {
-    const response = request.action === 'format' ? handleFormat(request) : handleParse(request);
-    self.postMessage(response);
+    const response = request.action === 'format'
+      ? handleFormat(request)
+      : request.action === 'parse'
+        ? await handleParse(request)
+        : handleExportText(request);
+    if (response.ok && response.action === 'exportText') {
+      postWorkerMessage(response, [response.bytes.buffer as ArrayBuffer]);
+    } else {
+      postWorkerMessage(response);
+    }
   } catch (error) {
-    self.postMessage({
+    postWorkerMessage({
       action: request.action,
       id,
       mode,
@@ -73,10 +105,10 @@ self.addEventListener('message', (event: MessageEvent<FormatRequest>) => {
       error: errorMessage(error),
     });
   }
-});
+}
 
 function handleFormat(request: Extract<FormatRequest, { action: 'format' }>): FormatResponse {
-  const formatted = request.mode === 'json' ? formatJsonText(request.value) : formatStructuredText(request.value, request.mode);
+  const formatted = formatText(request.value, request.mode);
   const truncated = formatted.length > PREVIEW_LIMIT;
   const text = truncated
     ? `${formatted.slice(0, PREVIEW_LIMIT)}${TRUNCATED_SUFFIX[request.mode]}`
@@ -92,8 +124,10 @@ function handleFormat(request: Extract<FormatRequest, { action: 'format' }>): Fo
   } satisfies FormatSuccess & { action: 'format'; ok: true };
 }
 
-function handleParse(request: Extract<FormatRequest, { action: 'parse' }>): FormatResponse {
-  const { value, plainValue } = parseStructuredText(request.text, request.mode);
+async function handleParse(request: Extract<FormatRequest, { action: 'parse' }>): Promise<FormatResponse> {
+  const value = request.mode === 'json'
+    ? await parseJsonText(request.text)
+    : parseStructuredText(request.text, request.mode).value;
 
   return {
     action: 'parse',
@@ -101,8 +135,36 @@ function handleParse(request: Extract<FormatRequest, { action: 'parse' }>): Form
     mode: request.mode,
     ok: true,
     value,
-    plainValue,
+    stats: collectStats(value),
   };
+}
+
+function handleExportText(request: Extract<FormatRequest, { action: 'exportText' }>): FormatResponse {
+  const text = formatText(request.value, request.mode);
+  const bytes = new TextEncoder().encode(text);
+  return {
+    action: 'exportText',
+    id: request.id,
+    mode: request.mode,
+    ok: true,
+    bytes,
+  };
+}
+
+function formatText(value: RtonValue, mode: FormatMode) {
+  return mode === 'json' ? formatJsonText(value) : formatStructuredText(value, mode);
+}
+
+async function parseJsonText(text: string) {
+  await ensureWasmReady();
+  return decodeRtonValueWire(json_text_to_value(text));
+}
+
+async function ensureWasmReady() {
+  if (!wasmReady) {
+    wasmReady = init().then(() => undefined);
+  }
+  await wasmReady;
 }
 
 function formatJsonText(value: RtonValue) {
@@ -131,4 +193,8 @@ function assertJsonCompatible(value: unknown) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function postWorkerMessage(message: FormatResponse, transfer?: Transferable[]) {
+  (self as unknown as { postMessage: (message: FormatResponse, transfer?: Transferable[]) => void }).postMessage(message, transfer);
 }

@@ -25,7 +25,7 @@ type ToolbarDropTarget =
   | { type: 'group'; id: ToolbarGroupId; placement: DropPlacement }
   | { type: 'row-end'; rowIndex: number };
 
-const TOOLBAR_LAYOUT_KEY = 'rton-editor-toolbar-layout';
+const TOOLBAR_LAYOUT_KEY = 'rton-editor-legacy-toolbar-layout';
 const TOOLBAR_GROUP_IDS: ToolbarGroupId[] = ['file', 'edit', 'format', 'textExport', 'rtonExport', 'prefs'];
 const DEFAULT_TOOLBAR_ROWS: ToolbarRows = [
   ['file', 'edit', 'format'],

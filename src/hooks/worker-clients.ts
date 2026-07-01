@@ -4,11 +4,13 @@ import type { Stats } from '../domain/rton-value-analysis';
 import type { RtonValue } from '../domain/rton-value';
 import type { RtonBinaryEncoding, ViewMode } from '../domain/rton-codec';
 import type { RemoteRtonValueNode, RtonDocumentRef } from '../domain/rton-document';
-import type { RtonValuePath, SearchMatch } from '../domain/rton-value-editing';
+import type { RtonDocumentEditOperation, RtonValuePath, SearchMatch } from '../domain/rton-value-editing';
+import type { LoadableFileKind } from '../files/file-loading';
+import type { BatchExportMode } from '../files/batch-export';
 
 export type RtonDocumentTextMode = 'json' | 'yaml' | 'toml';
 
-export type FormatWorkerAction = 'format' | 'parse';
+export type FormatWorkerAction = 'format' | 'parse' | 'exportText';
 
 export type FormatWorkerResponse =
   | {
@@ -22,10 +24,17 @@ export type FormatWorkerResponse =
   | {
       action: 'parse';
       id: number;
-      mode: Exclude<ViewMode, 'json'>;
+      mode: ViewMode;
       ok: true;
       value: RtonValue;
-      plainValue: unknown;
+      stats: Stats;
+    }
+  | {
+      action: 'exportText';
+      id: number;
+      mode: ViewMode;
+      ok: true;
+      bytes: Uint8Array;
     }
   | {
       action: FormatWorkerAction;
@@ -51,8 +60,31 @@ export type FormatWorkerMessage =
   | {
       action: 'parse';
       id: number;
-      mode: Exclude<ViewMode, 'json'>;
+      mode: ViewMode;
       text: string;
+    }
+  | {
+      action: 'exportText';
+      id: number;
+      value: RtonValue;
+      mode: ViewMode;
+    };
+
+type FormatWorkerMessageInput =
+  | {
+      action: 'format';
+      value: RtonValue;
+      mode: ViewMode;
+    }
+  | {
+      action: 'parse';
+      mode: ViewMode;
+      text: string;
+    }
+  | {
+      action: 'exportText';
+      value: RtonValue;
+      mode: ViewMode;
     };
 
 export type ByteTransformWorkerPayload =
@@ -67,6 +99,13 @@ export type ByteTransformWorkerPayload =
       source: RtonBinaryEncoding;
       target: RtonBinaryEncoding;
       bytes: Uint8Array;
+      result?: ByteTransformResultKind;
+    }
+  | {
+      kind: 'file';
+      source: RtonBinaryEncoding;
+      target: RtonBinaryEncoding;
+      file: File;
       result?: ByteTransformResultKind;
     };
 
@@ -104,7 +143,7 @@ export type RtonDecodeWorkerOutput = {
   value: RtonValue | null;
   document: RtonDocumentRef | null;
   stats: Stats;
-  plainBytes: Uint8Array;
+  plainBytes: Uint8Array | null;
   compact: boolean;
   encrypted: boolean;
 };
@@ -130,6 +169,21 @@ export type RtonDocumentByteUpdateOutput = {
   encrypted: boolean;
 };
 
+export type RtonDocumentByteRangeOutput = {
+  bytes: Uint8Array;
+};
+
+export type RtonDocumentBinaryOutput = {
+  byteLength: number;
+  bytes: Uint8Array | null;
+};
+
+export type RtonDocumentValueUpdateOutput = {
+  document: RtonDocumentRef;
+  stats: Stats;
+  compact: boolean;
+};
+
 type RtonDecodeWorkerRequest =
   | {
       action: 'decode';
@@ -137,6 +191,15 @@ type RtonDecodeWorkerRequest =
       bytes: Uint8Array;
       includeValue: boolean;
       retainDocument: boolean;
+      includeBytes: boolean;
+    }
+  | {
+      action: 'decode';
+      id: number;
+      file: File;
+      includeValue: boolean;
+      retainDocument: boolean;
+      includeBytes: boolean;
     }
   | {
       action: 'children';
@@ -160,10 +223,37 @@ type RtonDecodeWorkerRequest =
       path: RtonValuePath;
     }
   | {
+      action: 'byteRange';
+      id: number;
+      documentId: number;
+      start: number;
+      end: number;
+    }
+  | {
       action: 'exportText';
       id: number;
       documentId: number;
       mode: RtonDocumentTextMode;
+    }
+  | {
+      action: 'exportRton';
+      id: number;
+      documentId: number;
+      target: RtonBinaryEncoding;
+      result: 'bytes' | 'size';
+    }
+  | {
+      action: 'updateValue';
+      id: number;
+      documentId: number;
+      path: RtonValuePath;
+      value: RtonValue;
+    }
+  | {
+      action: 'editDocument';
+      id: number;
+      documentId: number;
+      operation: RtonDocumentEditOperation;
     }
   | {
       action: 'replaceDocumentBytes';
@@ -185,7 +275,7 @@ type RtonDecodeWorkerResponse =
       value?: RtonValue;
       document?: RtonDocumentRef;
       stats: Stats;
-      plainBytes: Uint8Array;
+      plainBytes?: Uint8Array;
       compact: boolean;
       encrypted: boolean;
       elapsedMs: number;
@@ -214,10 +304,39 @@ type RtonDecodeWorkerResponse =
       offset: number | null;
     }
   | {
+      action: 'byteRange';
+      id: number;
+      ok: true;
+      bytes: Uint8Array;
+    }
+  | {
       action: 'exportText';
       id: number;
       ok: true;
       bytes: Uint8Array;
+    }
+  | {
+      action: 'exportRton';
+      id: number;
+      ok: true;
+      byteLength: number;
+      bytes?: Uint8Array;
+    }
+  | {
+      action: 'updateValue';
+      id: number;
+      ok: true;
+      document: RtonDocumentRef;
+      stats: Stats;
+      compact: boolean;
+    }
+  | {
+      action: 'editDocument';
+      id: number;
+      ok: true;
+      document: RtonDocumentRef;
+      stats: Stats;
+      compact: boolean;
     }
   | {
       action: 'replaceDocumentBytes';
@@ -249,10 +368,69 @@ type PendingRtonDecode = {
       | RtonDocumentChildrenOutput
       | RtonDocumentSearchOutput
       | RtonDocumentByteUpdateOutput
+      | RtonDocumentByteRangeOutput
+      | RtonDocumentBinaryOutput
+      | RtonDocumentValueUpdateOutput
       | Uint8Array
       | number
       | null
   ) => void;
+  reject: (error: Error) => void;
+};
+
+export type TextParseWorkerOutput = {
+  value: RtonValue;
+  stats: Stats;
+};
+
+export type BatchExportWorkerItem =
+  | {
+      path: string;
+      source: 'file';
+      file: File;
+      kind: LoadableFileKind;
+    }
+  | {
+      path: string;
+      source: 'value';
+      value: RtonValue;
+    };
+
+export type BatchExportWorkerOutput = {
+  exportedCount: number;
+  errors: string[];
+  zipBytes: Uint8Array | null;
+};
+
+type BatchExportWorkerRequest = {
+  id: number;
+  items: BatchExportWorkerItem[];
+  mode: BatchExportMode;
+  compact: boolean;
+  encrypted: boolean;
+};
+
+type BatchExportWorkerResponse =
+  | {
+      id: number;
+      ok: true;
+      kind: 'progress';
+      completed: number;
+      total: number;
+    }
+  | ({
+      id: number;
+      ok: true;
+      kind: 'result';
+    } & BatchExportWorkerOutput)
+  | {
+      id: number;
+      ok: false;
+      error: string;
+    };
+
+type PendingBatchExport = {
+  resolve: (output: BatchExportWorkerOutput) => void;
   reject: (error: Error) => void;
 };
 
@@ -387,6 +565,118 @@ export function useFormatWorkerClient({
   };
 }
 
+type PendingTextTask = {
+  resolve: (output: TextParseWorkerOutput | Uint8Array) => void;
+  reject: (error: Error) => void;
+};
+
+export function useTextTaskWorker({
+  t,
+  onError,
+}: {
+  t: Translator;
+  onError: (message: string) => void;
+}) {
+  const textTaskWorker = useRef<Worker | null>(null);
+  const textTaskRequestId = useRef(0);
+  const textTaskPromises = useRef(new Map<number, PendingTextTask>());
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  const rejectPendingTextTasks = useCallback((message: string) => {
+    for (const pending of textTaskPromises.current.values()) {
+      pending.reject(new Error(message));
+    }
+    textTaskPromises.current.clear();
+  }, []);
+
+  const terminateTextTaskWorker = useCallback(() => {
+    textTaskRequestId.current += 1;
+    rejectPendingTextTasks(t('status.formatTaskCancelled'));
+    if (textTaskWorker.current) {
+      textTaskWorker.current.terminate();
+      textTaskWorker.current = null;
+    }
+  }, [rejectPendingTextTasks, t]);
+
+  const getTextTaskWorker = useCallback(() => {
+    if (!textTaskWorker.current) {
+      textTaskWorker.current = new Worker(new URL('../workers/format-worker.ts', import.meta.url), { type: 'module' });
+      textTaskWorker.current.addEventListener('message', (event: MessageEvent<FormatWorkerResponse>) => {
+        const response = event.data;
+        const pending = textTaskPromises.current.get(response.id);
+        if (!pending) {
+          return;
+        }
+
+        textTaskPromises.current.delete(response.id);
+        if (!response.ok) {
+          pending.reject(new Error(response.error));
+          return;
+        }
+
+        if (response.action === 'parse') {
+          pending.resolve({ value: response.value, stats: response.stats });
+        } else if (response.action === 'exportText') {
+          pending.resolve(response.bytes);
+        } else {
+          pending.reject(new Error(t('status.formatWorkerUnreadable')));
+        }
+      });
+      textTaskWorker.current.addEventListener('error', (event) => {
+        event.preventDefault();
+        const message = event instanceof ErrorEvent && event.message ? event.message : t('status.formatWorkerError');
+        rejectPendingTextTasks(message);
+        onErrorRef.current(message);
+      });
+      textTaskWorker.current.addEventListener('messageerror', () => {
+        const message = t('status.formatWorkerUnreadable');
+        rejectPendingTextTasks(message);
+        onErrorRef.current(message);
+      });
+    }
+
+    return textTaskWorker.current;
+  }, [rejectPendingTextTasks, t]);
+
+  const runTextTaskRequest = useCallback(
+    <T,>(message: FormatWorkerMessageInput) => {
+      terminateTextTaskWorker();
+      const requestId = textTaskRequestId.current + 1;
+      textTaskRequestId.current = requestId;
+      return new Promise<T>((resolve, reject) => {
+        textTaskPromises.current.set(requestId, {
+          resolve: (output) => resolve(output as T),
+          reject,
+        });
+        getTextTaskWorker().postMessage({ id: requestId, ...message } satisfies FormatWorkerMessage);
+      });
+    },
+    [getTextTaskWorker, terminateTextTaskWorker],
+  );
+
+  const runTextParseInWorker = useCallback(
+    (text: string, mode: ViewMode) => runTextTaskRequest<TextParseWorkerOutput>({ action: 'parse', mode, text }),
+    [runTextTaskRequest],
+  );
+
+  const runTextExportInWorker = useCallback(
+    (value: RtonValue, mode: ViewMode) => runTextTaskRequest<Uint8Array>({ action: 'exportText', mode, value }),
+    [runTextTaskRequest],
+  );
+
+  useEffect(() => terminateTextTaskWorker, [terminateTextTaskWorker]);
+
+  return {
+    runTextExportInWorker,
+    runTextParseInWorker,
+    terminateTextTaskWorker,
+  };
+}
+
 export function useByteTransformWorker({
   t,
   onError,
@@ -497,6 +787,108 @@ export function useByteTransformWorker({
   };
 }
 
+export function useBatchExportWorker({
+  t,
+  onError,
+  onProgress,
+}: {
+  t: Translator;
+  onError: (message: string) => void;
+  onProgress: (completed: number, total: number) => void;
+}) {
+  const batchExportWorker = useRef<Worker | null>(null);
+  const batchExportRequestId = useRef(0);
+  const batchExportPromises = useRef(new Map<number, PendingBatchExport>());
+  const onErrorRef = useRef(onError);
+  const onProgressRef = useRef(onProgress);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+    onProgressRef.current = onProgress;
+  }, [onError, onProgress]);
+
+  const rejectPendingBatchExports = useCallback((message: string) => {
+    for (const pending of batchExportPromises.current.values()) {
+      pending.reject(new Error(message));
+    }
+    batchExportPromises.current.clear();
+  }, []);
+
+  const terminateBatchExportWorker = useCallback(() => {
+    batchExportRequestId.current += 1;
+    rejectPendingBatchExports(t('status.batchCancelled'));
+    if (batchExportWorker.current) {
+      batchExportWorker.current.terminate();
+      batchExportWorker.current = null;
+    }
+  }, [rejectPendingBatchExports, t]);
+
+  const getBatchExportWorker = useCallback(() => {
+    if (!batchExportWorker.current) {
+      batchExportWorker.current = new Worker(new URL('../workers/batch-export-worker.ts', import.meta.url), { type: 'module' });
+      batchExportWorker.current.addEventListener('message', (event: MessageEvent<BatchExportWorkerResponse>) => {
+        const response = event.data;
+        const pending = batchExportPromises.current.get(response.id);
+        if (!pending) {
+          return;
+        }
+
+        if (!response.ok) {
+          batchExportPromises.current.delete(response.id);
+          pending.reject(new Error(response.error));
+          return;
+        }
+
+        if (response.kind === 'progress') {
+          onProgressRef.current(response.completed, response.total);
+          return;
+        }
+
+        batchExportPromises.current.delete(response.id);
+        pending.resolve({
+          exportedCount: response.exportedCount,
+          errors: response.errors,
+          zipBytes: response.zipBytes,
+        });
+      });
+      batchExportWorker.current.addEventListener('error', (event) => {
+        event.preventDefault();
+        const message = event instanceof ErrorEvent && event.message ? event.message : t('status.batchWorkerError');
+        rejectPendingBatchExports(message);
+        onErrorRef.current(message);
+      });
+      batchExportWorker.current.addEventListener('messageerror', () => {
+        const message = t('status.batchWorkerUnreadable');
+        rejectPendingBatchExports(message);
+        onErrorRef.current(message);
+      });
+    }
+
+    return batchExportWorker.current;
+  }, [rejectPendingBatchExports, t]);
+
+  const runBatchExportInWorker = useCallback(
+    (input: Omit<BatchExportWorkerRequest, 'id'>) => {
+      terminateBatchExportWorker();
+      const requestId = batchExportRequestId.current + 1;
+      batchExportRequestId.current = requestId;
+      const request = { id: requestId, ...input } satisfies BatchExportWorkerRequest;
+      return new Promise<BatchExportWorkerOutput>((resolve, reject) => {
+        batchExportPromises.current.set(requestId, { resolve, reject });
+        getBatchExportWorker().postMessage(request);
+      });
+    },
+    [getBatchExportWorker, terminateBatchExportWorker],
+  );
+
+  useEffect(() => terminateBatchExportWorker, [terminateBatchExportWorker]);
+
+  return {
+    runBatchExportInWorker,
+    terminateBatchExportWorker,
+  };
+}
+
 export function useRtonDecodeWorker({
   t,
   onError,
@@ -546,7 +938,7 @@ export function useRtonDecodeWorker({
               value: response.value ?? null,
               document: response.document ?? null,
               stats: response.stats,
-              plainBytes: response.plainBytes,
+              plainBytes: response.plainBytes ?? null,
               compact: response.compact,
               encrypted: response.encrypted,
             });
@@ -562,8 +954,14 @@ export function useRtonDecodeWorker({
             });
           } else if (response.action === 'locate') {
             pending.resolve(response.offset);
+          } else if (response.action === 'byteRange') {
+            pending.resolve({ bytes: response.bytes });
           } else if (response.action === 'exportText') {
             pending.resolve(response.bytes);
+          } else if (response.action === 'exportRton') {
+            pending.resolve({ byteLength: response.byteLength, bytes: response.bytes ?? null });
+          } else if (response.action === 'updateValue' || response.action === 'editDocument') {
+            pending.resolve({ document: response.document, stats: response.stats, compact: response.compact });
           } else if (response.action === 'replaceDocumentBytes') {
             pending.resolve({
               document: response.document,
@@ -620,7 +1018,7 @@ export function useRtonDecodeWorker({
   }, []);
 
   const runRtonDecodeInWorker = useCallback(
-    (bytes: Uint8Array, options: { includeValue?: boolean; retainDocument?: boolean } = {}) => {
+    (bytes: Uint8Array, options: { includeValue?: boolean; retainDocument?: boolean; includeBytes?: boolean } = {}) => {
       const requestId = nextRtonDecodeRequestId();
       const request = {
         action: 'decode',
@@ -628,8 +1026,25 @@ export function useRtonDecodeWorker({
         bytes,
         includeValue: options.includeValue ?? true,
         retainDocument: options.retainDocument ?? false,
+        includeBytes: options.includeBytes ?? true,
       } satisfies RtonDecodeWorkerRequest;
       return runRtonWorkerRequest<RtonDecodeWorkerOutput>(request, [bytes.buffer as ArrayBuffer]);
+    },
+    [nextRtonDecodeRequestId, runRtonWorkerRequest],
+  );
+
+  const runRtonDecodeFileInWorker = useCallback(
+    (file: File, options: { includeValue?: boolean; retainDocument?: boolean; includeBytes?: boolean } = {}) => {
+      const requestId = nextRtonDecodeRequestId();
+      const request = {
+        action: 'decode',
+        id: requestId,
+        file,
+        includeValue: options.includeValue ?? true,
+        retainDocument: options.retainDocument ?? false,
+        includeBytes: options.includeBytes ?? true,
+      } satisfies RtonDecodeWorkerRequest;
+      return runRtonWorkerRequest<RtonDecodeWorkerOutput>(request);
     },
     [nextRtonDecodeRequestId, runRtonWorkerRequest],
   );
@@ -676,6 +1091,20 @@ export function useRtonDecodeWorker({
     [nextRtonDecodeRequestId, runRtonWorkerRequest],
   );
 
+  const getRtonDocumentByteRange = useCallback(
+    (documentId: number, start: number, end: number) => {
+      const request = {
+        action: 'byteRange',
+        id: nextRtonDecodeRequestId(),
+        documentId,
+        start,
+        end,
+      } satisfies RtonDecodeWorkerRequest;
+      return runRtonWorkerRequest<RtonDocumentByteRangeOutput>(request);
+    },
+    [nextRtonDecodeRequestId, runRtonWorkerRequest],
+  );
+
   const exportRtonDocumentText = useCallback(
     (documentId: number, mode: RtonDocumentTextMode) => {
       const request = {
@@ -689,6 +1118,39 @@ export function useRtonDecodeWorker({
     [nextRtonDecodeRequestId, runRtonWorkerRequest],
   );
 
+  const exportRtonDocumentRequest = useCallback(
+    (documentId: number, target: RtonBinaryEncoding, result: 'bytes' | 'size') => {
+      const request = {
+        action: 'exportRton',
+        id: nextRtonDecodeRequestId(),
+        documentId,
+        target,
+        result,
+      } satisfies RtonDecodeWorkerRequest;
+      return runRtonWorkerRequest<RtonDocumentBinaryOutput>(request);
+    },
+    [nextRtonDecodeRequestId, runRtonWorkerRequest],
+  );
+
+  const exportRtonDocumentBytes = useCallback(
+    async (documentId: number, target: RtonBinaryEncoding) => {
+      const output = await exportRtonDocumentRequest(documentId, target, 'bytes');
+      if (!output.bytes) {
+        throw new Error(t('status.rtonDecodeWorkerUnreadable'));
+      }
+      return output.bytes;
+    },
+    [exportRtonDocumentRequest, t],
+  );
+
+  const exportRtonDocumentSize = useCallback(
+    async (documentId: number, target: RtonBinaryEncoding) => {
+      const output = await exportRtonDocumentRequest(documentId, target, 'size');
+      return output.byteLength;
+    },
+    [exportRtonDocumentRequest],
+  );
+
   const replaceRtonDocumentBytes = useCallback(
     (documentId: number, bytes: Uint8Array) => {
       const request = {
@@ -698,6 +1160,33 @@ export function useRtonDecodeWorker({
         bytes,
       } satisfies RtonDecodeWorkerRequest;
       return runRtonWorkerRequest<RtonDocumentByteUpdateOutput>(request, [bytes.buffer as ArrayBuffer]);
+    },
+    [nextRtonDecodeRequestId, runRtonWorkerRequest],
+  );
+
+  const updateRtonDocumentValue = useCallback(
+    (documentId: number, path: RtonValuePath, value: RtonValue) => {
+      const request = {
+        action: 'updateValue',
+        id: nextRtonDecodeRequestId(),
+        documentId,
+        path,
+        value,
+      } satisfies RtonDecodeWorkerRequest;
+      return runRtonWorkerRequest<RtonDocumentValueUpdateOutput>(request);
+    },
+    [nextRtonDecodeRequestId, runRtonWorkerRequest],
+  );
+
+  const editRtonDocument = useCallback(
+    (documentId: number, operation: RtonDocumentEditOperation) => {
+      const request = {
+        action: 'editDocument',
+        id: nextRtonDecodeRequestId(),
+        documentId,
+        operation,
+      } satisfies RtonDecodeWorkerRequest;
+      return runRtonWorkerRequest<RtonDocumentValueUpdateOutput>(request);
     },
     [nextRtonDecodeRequestId, runRtonWorkerRequest],
   );
@@ -717,13 +1206,19 @@ export function useRtonDecodeWorker({
   useEffect(() => terminateRtonDecodeWorker, [terminateRtonDecodeWorker]);
 
   return {
+    editRtonDocument,
     exportRtonDocumentText,
+    exportRtonDocumentBytes,
+    exportRtonDocumentSize,
+    getRtonDocumentByteRange,
     getRtonDocumentChildren,
     locateRtonDocumentOffset,
     releaseRtonDocument,
     replaceRtonDocumentBytes,
+    runRtonDecodeFileInWorker,
     runRtonDecodeInWorker,
     searchRtonDocument,
     terminateRtonDecodeWorker,
+    updateRtonDocumentValue,
   };
 }

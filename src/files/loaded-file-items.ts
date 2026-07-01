@@ -8,6 +8,7 @@ import {
 import { formatBytes } from './file-export';
 import type { Translator } from '../localization/i18n';
 import type { EditorSurface, ViewMode } from '../domain/rton-codec';
+import type { HexByteSource } from '../domain/hex-byte-source';
 
 export type LoadedRtonFile = {
   id: number;
@@ -23,6 +24,7 @@ export function buildLoadedFileItems({
   activeTabId,
   fileName,
   sourceBytes,
+  hexByteSource,
   viewMode,
   editorSurface,
   t,
@@ -32,6 +34,7 @@ export function buildLoadedFileItems({
   activeTabId: number | null;
   fileName: string;
   sourceBytes: Uint8Array | null;
+  hexByteSource: HexByteSource | null;
   viewMode: ViewMode;
   editorSurface: EditorSurface;
   t: Translator;
@@ -44,6 +47,7 @@ export function buildLoadedFileItems({
     const path = active ? fileName : file.path;
     const parts = splitDisplayPath(path);
     const bytes = active ? sourceBytes : tab?.sourceBytes;
+    const lazyBytes = active ? hexByteSource : tab?.hexByteSource;
     const mode = active ? viewMode : tab?.viewMode;
     const surface = active ? editorSurface : tab?.editorSurface;
     const kindLabel = loadableFileKindLabel(file.kind);
@@ -54,7 +58,7 @@ export function buildLoadedFileItems({
       path,
       name: parts.at(-1) ?? path,
       detail: tab && mode
-        ? `${bytes ? formatBytes(bytes.byteLength) : formatBytes(file.file.size)} · ${surface === 'hex' ? 'RTON' : mode.toUpperCase()}`
+        ? `${bytes ? formatBytes(bytes.byteLength) : lazyBytes ? formatBytes(lazyBytes.byteLength) : formatBytes(file.file.size)} · ${surface === 'hex' ? 'RTON' : mode.toUpperCase()}`
         : t('fileList.closedDetail', { size: formatBytes(file.file.size), kind: kindLabel }),
       active,
     };
@@ -69,7 +73,7 @@ export function buildLoadedFileItems({
       tabId: tab.id,
       path,
       name: parts.at(-1) ?? path,
-      detail: `${active ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : t('app.textInput')) : (tab.sourceBytes ? formatBytes(tab.sourceBytes.byteLength) : t('app.textInput'))} · ${(active ? editorSurface : tab.editorSurface) === 'hex' ? 'RTON' : (active ? viewMode : tab.viewMode).toUpperCase()}`,
+      detail: `${active ? (sourceBytes ? formatBytes(sourceBytes.byteLength) : hexByteSource ? formatBytes(hexByteSource.byteLength) : t('app.textInput')) : (tab.sourceBytes ? formatBytes(tab.sourceBytes.byteLength) : tab.hexByteSource ? formatBytes(tab.hexByteSource.byteLength) : t('app.textInput'))} · ${(active ? editorSurface : tab.editorSurface) === 'hex' ? 'RTON' : (active ? viewMode : tab.viewMode).toUpperCase()}`,
       active,
     };
   });

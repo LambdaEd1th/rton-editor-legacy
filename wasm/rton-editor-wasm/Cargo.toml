@@ -2,8 +2,8 @@
 name = "rton_editor_wasm"
 version = "0.1.0"
 edition = "2024"
-description = "wasm-bindgen bridge for the RTON editor"
-repository = "https://github.com/LambdaEd1th/rton-editor"
+description = "wasm-bindgen bridge for RTON Editor Legacy"
+repository = "https://github.com/LambdaEd1th/rton-editor-legacy"
 license = "AGPL-3.0-or-later"
 publish = false
 

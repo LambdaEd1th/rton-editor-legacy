@@ -1,11 +1,5 @@
 import { useCallback, useRef } from 'react';
-import {
-  createBatchExportArchive,
-  encodeBatchExportValue,
-  resolveBatchExportItemValue,
-  type BatchExportMode,
-  type BatchExportResolvableItem,
-} from '../files/batch-export';
+import type { BatchExportMode, BatchExportResolvableItem } from '../files/batch-export';
 import type { EditorTab } from '../workspace/editor-tabs';
 import type { StructuredFormatMode } from '../domain/format-conversion';
 import {
@@ -20,7 +14,6 @@ import type { Translator } from '../localization/i18n';
 import type { RtonDocumentRef } from '../domain/rton-document';
 import {
   formatRtonEncoding,
-  rtonValueToJsonText,
   sameRtonEncoding,
   type EditorSurface,
   type RtonBinaryEncoding,
@@ -28,7 +21,13 @@ import {
   type ViewMode,
 } from '../domain/rton-codec';
 import type { RtonValue } from '../domain/rton-value';
-import type { ByteTransformWorkerPayload, RtonDocumentTextMode } from './worker-clients';
+import type { HexByteSource } from '../domain/hex-byte-source';
+import type {
+  BatchExportWorkerItem,
+  BatchExportWorkerOutput,
+  ByteTransformWorkerPayload,
+  RtonDocumentTextMode,
+} from './worker-clients';
 
 type ExportListItem = BatchExportResolvableItem & {
   key: string;
@@ -40,6 +39,7 @@ export function useExportActions({
   binaryEncoding,
   compactOutput,
   currentValueRef,
+  hexByteSource,
   rtonDocument,
   editorSurface,
   encryptOutput,
@@ -57,6 +57,10 @@ export function useExportActions({
   wasmReady,
   runByteTransformInWorker,
   runByteTransformSizeInWorker,
+  runBatchExportInWorker,
+  runTextExportInWorker,
+  exportRtonDocumentBytes,
+  exportRtonDocumentSize,
   exportRtonDocumentText,
 }: {
   activeTabId: number | null;
@@ -64,6 +68,7 @@ export function useExportActions({
   binaryEncoding: RtonBinaryEncoding | null;
   compactOutput: boolean;
   currentValueRef: { current: RtonValue | null };
+  hexByteSource: HexByteSource | null;
   rtonDocument: RtonDocumentRef | null;
   editorSurface: EditorSurface;
   encryptOutput: boolean;
@@ -81,6 +86,15 @@ export function useExportActions({
   wasmReady: boolean;
   runByteTransformInWorker: (payload: ByteTransformWorkerPayload) => Promise<Uint8Array>;
   runByteTransformSizeInWorker: (payload: ByteTransformWorkerPayload) => Promise<number>;
+  runBatchExportInWorker: (input: {
+    items: BatchExportWorkerItem[];
+    mode: BatchExportMode;
+    compact: boolean;
+    encrypted: boolean;
+  }) => Promise<BatchExportWorkerOutput>;
+  runTextExportInWorker: (value: RtonValue, mode: RtonDocumentTextMode) => Promise<Uint8Array>;
+  exportRtonDocumentBytes: (documentId: number, target: RtonBinaryEncoding) => Promise<Uint8Array>;
+  exportRtonDocumentSize: (documentId: number, target: RtonBinaryEncoding) => Promise<number>;
   exportRtonDocumentText: (documentId: number, mode: RtonDocumentTextMode) => Promise<Uint8Array>;
 }) {
   const outputSizeRequestId = useRef(0);
@@ -97,9 +111,9 @@ export function useExportActions({
     }
 
     try {
-      if (editorSurface === 'hex' && binaryBytes) {
+      if (editorSurface === 'hex' && (binaryBytes || hexByteSource || rtonDocument)) {
         const hexOutputMatchesSource = binaryEncoding !== null && sameRtonEncoding(binaryEncoding, targetBinaryEncoding);
-        setLastOutputBytes(hexOutputMatchesSource ? binaryBytes.byteLength : null);
+        setLastOutputBytes(hexOutputMatchesSource ? binaryBytes?.byteLength ?? rtonDocument?.byteLength ?? hexByteSource?.byteLength ?? null : null);
         updateStatus(t('format.exportable', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
         return;
       }
@@ -119,7 +133,9 @@ export function useExportActions({
     binaryEncoding,
     currentValueRef,
     editorSurface,
+    hexByteSource,
     parseError,
+    rtonDocument,
     setLastOutputBytes,
     t,
     targetBinaryEncoding,
@@ -164,6 +180,29 @@ export function useExportActions({
         return;
       }
 
+      if (rtonDocument && !currentValueRef.current) {
+        updateStatus(t('status.generatingRtonSize', { encoding: formatRtonEncoding(nextTargetBinaryEncoding, t) }), 'warn');
+        const byteLength = await exportRtonDocumentSize(rtonDocument.id, nextTargetBinaryEncoding);
+        if (requestId === outputSizeRequestId.current) {
+          setLastOutputBytes(byteLength);
+          updateStatus(
+            t('status.rtonSizeGenerated', {
+              encoding: formatRtonEncoding(nextTargetBinaryEncoding, t),
+              size: formatBytes(byteLength),
+            }),
+            'ok',
+          );
+        }
+        return;
+      }
+
+      if (hexByteSource && binaryEncoding && hexByteSource.kind === 'file') {
+        if (sameRtonEncoding(binaryEncoding, nextTargetBinaryEncoding)) {
+          setLastOutputBytes(hexByteSource.byteLength);
+        }
+        return;
+      }
+
       const value = currentValueRef.current;
       if (!value) {
         return;
@@ -195,6 +234,9 @@ export function useExportActions({
     binaryBytes,
     binaryEncoding,
     currentValueRef,
+    exportRtonDocumentSize,
+    hexByteSource,
+    rtonDocument,
     runByteTransformSizeInWorker,
     setLastOutputBytes,
     t,
@@ -234,6 +276,34 @@ export function useExportActions({
         return;
       }
 
+      if (rtonDocument && !currentValueRef.current) {
+        updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(targetBinaryEncoding, t) }), 'warn');
+        const outputBytes = await exportRtonDocumentBytes(rtonDocument.id, targetBinaryEncoding);
+        setLastOutputBytes(outputBytes.byteLength);
+        downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
+        updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
+        return;
+      }
+
+      if (hexByteSource && binaryEncoding && hexByteSource.kind === 'file') {
+        if (sameRtonEncoding(binaryEncoding, targetBinaryEncoding)) {
+          setLastOutputBytes(hexByteSource.byteLength);
+          downloadBlob(hexByteSource.file, outputBaseName(fileName, 'rton'), 'application/octet-stream');
+        } else {
+          updateStatus(t('status.generatingHex', { encoding: formatRtonEncoding(targetBinaryEncoding, t) }), 'warn');
+          const outputBytes = await runByteTransformInWorker({
+            kind: 'file',
+            source: binaryEncoding,
+            target: targetBinaryEncoding,
+            file: hexByteSource.file,
+          });
+          setLastOutputBytes(outputBytes.byteLength);
+          downloadBytes(outputBytes, outputBaseName(fileName, 'rton'));
+        }
+        updateStatus(t('format.generated', { label: `${formatRtonEncoding(targetBinaryEncoding, t)} RTON` }), 'ok');
+        return;
+      }
+
       const value = currentValueRef.current;
       if (!value) {
         throw new Error(parseError ?? t('status.noSearchableValue'));
@@ -255,10 +325,13 @@ export function useExportActions({
     binaryBytes,
     binaryEncoding,
     currentValueRef,
+    exportRtonDocumentBytes,
     fileName,
+    hexByteSource,
     parseError,
     runByteTransformInWorker,
     setLastOutputBytes,
+    rtonDocument,
     t,
     targetBinaryEncoding,
     updateStatus,
@@ -283,12 +356,14 @@ export function useExportActions({
       if (!value) {
         throw new Error(parseError ?? t('status.noSearchableValue'));
       }
-      downloadBlob(new Blob([rtonValueToJsonText(value, true)], { type: 'application/json' }), outputBaseName(fileName, 'json'));
+      updateStatus(t('status.generatingTextExport', { label: 'JSON' }), 'warn');
+      const bytes = await runTextExportInWorker(value, 'json');
+      downloadBytes(bytes, outputBaseName(fileName, 'json'));
       updateStatus(t('format.generated', { label: 'JSON' }), 'ok');
     } catch (error) {
       updateStatus(errorMessage(error), 'error');
     }
-  }, [activeTabId, currentValueRef, exportRtonDocumentText, fileName, parseError, rtonDocument, t, updateStatus]);
+  }, [activeTabId, currentValueRef, exportRtonDocumentText, fileName, parseError, rtonDocument, runTextExportInWorker, t, updateStatus]);
 
   const downloadStructuredFormat = useCallback(
     async (mode: StructuredFormatMode) => {
@@ -310,15 +385,15 @@ export function useExportActions({
         if (!value) {
           throw new Error(parseError ?? t('status.noSearchableValue'));
         }
-        const { formatStructuredText } = await import('../domain/format-conversion');
-        const text = formatStructuredText(value, mode);
-        downloadBlob(text, outputBaseName(fileName, mode), mode === 'yaml' ? 'application/yaml' : 'application/toml');
+        updateStatus(t('status.generatingTextExport', { label: mode.toUpperCase() }), 'warn');
+        const bytes = await runTextExportInWorker(value, mode);
+        downloadBytes(bytes, outputBaseName(fileName, mode));
         updateStatus(t('format.generated', { label: mode.toUpperCase() }), 'ok');
       } catch (error) {
         updateStatus(errorMessage(error), 'error');
       }
     },
-    [activeTabId, currentValueRef, exportRtonDocumentText, fileName, parseError, rtonDocument, t, updateStatus],
+    [activeTabId, currentValueRef, exportRtonDocumentText, fileName, parseError, rtonDocument, runTextExportInWorker, t, updateStatus],
   );
 
   const batchExportSelectedFiles = useCallback(
@@ -338,39 +413,61 @@ export function useExportActions({
 
       const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
       const filesById = new Map(loadedFiles.map((file) => [file.id, file]));
-      const structuredFormatter =
-        mode === 'yaml' || mode === 'toml' ? (await import('../domain/format-conversion')).formatStructuredText : null;
+      const earlyErrors: string[] = [];
+      const workerItems: BatchExportWorkerItem[] = [];
 
-      const result = await createBatchExportArchive({
-        items: selectedItems,
-        mode,
-        resolveValue: (item) =>
-          resolveBatchExportItemValue(item, {
-            activeTabId,
-            currentValue: currentValueRef.current,
-            filesById,
-            tabsById,
-          }),
-        encodeValue: (value) =>
-          encodeBatchExportValue(value, mode, {
-            compact: compactOutput,
-            encrypted: encryptOutput,
-            structuredFormatter,
-          }),
-        describeError: errorMessage,
-      });
+      for (const item of selectedItems) {
+        const tab = item.tabId === null ? null : tabsById.get(item.tabId) ?? null;
+        const tabValue = item.tabId === activeTabId ? currentValueRef.current : tab?.currentValue ?? null;
+        if (tabValue) {
+          workerItems.push({ path: item.path, source: 'value', value: tabValue });
+          continue;
+        }
 
-      if (!result.zipBytes) {
-        updateStatus(result.errors[0] ?? t('status.noBatchSuccess'), 'error');
+        if (tab?.hexByteSource?.kind === 'file') {
+          workerItems.push({ path: item.path, source: 'file', file: tab.hexByteSource.file, kind: 'rton' });
+          continue;
+        }
+
+        if (item.fileId !== null) {
+          const file = filesById.get(item.fileId);
+          if (file) {
+            workerItems.push({ path: item.path, source: 'file', file: file.file, kind: file.kind });
+            continue;
+          }
+        }
+
+        earlyErrors.push(`${item.path}: ${t('status.noExportValue')}`);
+      }
+
+      if (workerItems.length === 0) {
+        updateStatus(earlyErrors[0] ?? t('status.noBatchSuccess'), 'error');
         return;
       }
 
-      downloadBytes(result.zipBytes, `rton-editor-${mode}-${timestampForFileName()}.zip`);
-      const errorSuffix = result.errors.length > 0 ? t('status.batchFailureSuffix', { count: result.errors.length.toLocaleString() }) : '';
-      updateStatus(
-        t('status.batchExported', { count: result.exportedCount.toLocaleString(), format: mode.toUpperCase(), suffix: errorSuffix }),
-        result.errors.length > 0 ? 'warn' : 'ok',
-      );
+      try {
+        const result = await runBatchExportInWorker({
+          items: workerItems,
+          mode,
+          compact: compactOutput,
+          encrypted: encryptOutput,
+        });
+        const errors = [...earlyErrors, ...result.errors];
+
+        if (!result.zipBytes) {
+          updateStatus(errors[0] ?? t('status.noBatchSuccess'), 'error');
+          return;
+        }
+
+        downloadBytes(result.zipBytes, `rton-editor-legacy-${mode}-${timestampForFileName()}.zip`);
+        const errorSuffix = errors.length > 0 ? t('status.batchFailureSuffix', { count: errors.length.toLocaleString() }) : '';
+        updateStatus(
+          t('status.batchExported', { count: result.exportedCount.toLocaleString(), format: mode.toUpperCase(), suffix: errorSuffix }),
+          errors.length > 0 ? 'warn' : 'ok',
+        );
+      } catch (error) {
+        updateStatus(errorMessage(error), 'error');
+      }
     },
     [
       activeTabId,
@@ -379,6 +476,7 @@ export function useExportActions({
       encryptOutput,
       loadedFileItems,
       loadedFiles,
+      runBatchExportInWorker,
       selectedFileKeys,
       t,
       tabs,

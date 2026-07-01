@@ -8,6 +8,7 @@ import {
 } from '../domain/rton-codec';
 import { formatBytes } from '../files/file-export';
 import type { Translator } from '../localization/i18n';
+import type { HexByteSource } from '../domain/hex-byte-source';
 
 export function buildOutputText({
   binaryBytes,
@@ -16,6 +17,7 @@ export function buildOutputText({
   editorText,
   hasActiveFile,
   lastOutputBytes,
+  hexByteSource,
   surfaceNote,
   targetBinaryEncoding,
   t,
@@ -27,6 +29,7 @@ export function buildOutputText({
   editorText: string;
   hasActiveFile: boolean;
   lastOutputBytes: number | null;
+  hexByteSource: HexByteSource | null;
   surfaceNote: string;
   targetBinaryEncoding: RtonBinaryEncoding;
   t: Translator;
@@ -37,7 +40,7 @@ export function buildOutputText({
   }
 
   if (editorSurface === 'hex') {
-    return buildRtonOutputText({ binaryBytes, binaryEncoding, lastOutputBytes, targetBinaryEncoding, t });
+    return buildRtonOutputText({ binaryBytes, binaryEncoding, hexByteSource, lastOutputBytes, targetBinaryEncoding, t });
   }
 
   return buildTextOutputText({ editorText, surfaceNote, t, viewMode });
@@ -47,17 +50,23 @@ function buildRtonOutputText({
   binaryBytes,
   binaryEncoding,
   lastOutputBytes,
+  hexByteSource,
   targetBinaryEncoding,
   t,
 }: {
   binaryBytes: Uint8Array | null;
   binaryEncoding: RtonBinaryEncoding | null;
   lastOutputBytes: number | null;
+  hexByteSource: HexByteSource | null;
   targetBinaryEncoding: RtonBinaryEncoding;
   t: Translator;
 }) {
   if (binaryBytes && binaryEncoding && sameRtonEncoding(binaryEncoding, targetBinaryEncoding)) {
     return `${formatBytes(binaryBytes.byteLength)} · ${formatRtonEncoding(binaryEncoding, t)} RTON`;
+  }
+
+  if (hexByteSource && binaryEncoding && sameRtonEncoding(binaryEncoding, targetBinaryEncoding)) {
+    return `${formatBytes(hexByteSource.byteLength)} · ${formatRtonEncoding(binaryEncoding, t)} RTON`;
   }
 
   if (lastOutputBytes !== null) {

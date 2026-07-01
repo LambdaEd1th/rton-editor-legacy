@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy RTON Editor Legacy to GitHub Pages
 
 on:
   push:

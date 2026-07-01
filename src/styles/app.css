@@ -788,6 +788,7 @@ summary {
   min-height: 0;
   flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr) 8px minmax(220px, var(--rton-hex-inspector-width, 310px));
+  overflow: hidden;
 }
 
 .rton-hex-table-pane {
@@ -795,6 +796,7 @@ summary {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .rton-hex-header,
@@ -819,6 +821,7 @@ summary {
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
+  position: relative;
 }
 
 .rton-hex-virtual-space {
@@ -1224,8 +1227,48 @@ summary {
   cursor: pointer;
 }
 
+.rton-value-name-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
 .rton-value-node-link {
+  flex: 0 1 auto;
   padding: 0;
+}
+
+.rton-value-node-actions {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.rton-value-action-button {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-control);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.rton-value-action-button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-control-hover);
+  color: var(--color-text-strong);
+}
+
+.rton-value-action-button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
 }
 
 .rton-value-kind-cell,
@@ -1258,6 +1301,10 @@ summary {
   }
 
   .rton-value-node-link {
+    grid-column: 1 / -1;
+  }
+
+  .rton-value-name-cell {
     grid-column: 1 / -1;
   }
 

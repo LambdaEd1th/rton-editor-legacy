@@ -20,7 +20,6 @@ import type { LoadedRtonFile } from '../files/loaded-file-items';
 import type { Translator } from '../localization/i18n';
 import type { PreviewPreference } from '../workspace/preferences';
 import {
-  decodeLoadableSource,
   isCompactRtonBytes,
   isEncryptedRtonBytes,
   isPendingTextPreview,
@@ -31,7 +30,7 @@ import {
 } from '../domain/rton-codec';
 import type { RtonValue } from '../domain/rton-value';
 import { RTON_LARGE_DOCUMENT_THRESHOLD_BYTES } from '../domain/rton-document';
-import type { RtonDecodeWorkerOutput } from './worker-clients';
+import type { RtonDecodeWorkerOutput, TextParseWorkerOutput } from './worker-clients';
 
 export function useFileImportActions({
   activeTabId,
@@ -43,11 +42,11 @@ export function useFileImportActions({
   openEditorTabs,
   previewPreference,
   renderTextForValue,
-  runRtonDecodeInWorker,
+  runRtonDecodeFileInWorker,
+  runTextParseInWorker,
   setLoadedFiles,
   tabs,
   t,
-  updateEditorTab,
   updateStatus,
   viewModeRef,
   wasmReady,
@@ -61,11 +60,11 @@ export function useFileImportActions({
   openEditorTabs: (tabs: EditorTab[]) => void;
   previewPreference: PreviewPreference;
   renderTextForValue: (value: RtonValue, mode: ViewMode) => boolean;
-  runRtonDecodeInWorker: (bytes: Uint8Array, options?: { includeValue?: boolean; retainDocument?: boolean }) => Promise<RtonDecodeWorkerOutput>;
+  runRtonDecodeFileInWorker: (file: File, options?: { includeValue?: boolean; retainDocument?: boolean; includeBytes?: boolean }) => Promise<RtonDecodeWorkerOutput>;
+  runTextParseInWorker: (text: string, mode: ViewMode) => Promise<TextParseWorkerOutput>;
   setLoadedFiles: (updater: LoadedRtonFile[] | ((files: LoadedRtonFile[]) => LoadedRtonFile[])) => void;
   tabs: EditorTab[];
   t: Translator;
-  updateEditorTab: (tabId: number, updater: (tab: EditorTab) => EditorTab) => void;
   updateStatus: (message: string, tone?: Tone) => void;
   viewModeRef: { current: ViewMode };
   wasmReady: boolean;
@@ -85,7 +84,6 @@ export function useFileImportActions({
       }
 
       const loadedTabs: EditorTab[] = [];
-      const deferredDecodes: Array<{ bytes: Uint8Array; tabId: number }> = [];
       const errors: string[] = [];
       const { preferredEditorSurface, preferredViewMode } = getPreferredPreview({
         activeTabId,
@@ -95,7 +93,14 @@ export function useFileImportActions({
       });
       for (const entry of candidates) {
         try {
-          const decoded = await decodeLoadableEntry(entry, preferredViewMode, preferredEditorSurface, t, runRtonDecodeInWorker);
+          const decoded = await decodeLoadableEntry(
+            entry,
+            preferredViewMode,
+            preferredEditorSurface,
+            t,
+            runRtonDecodeFileInWorker,
+            runTextParseInWorker,
+          );
           loadedTabs.push(
             createEditorTabFromDecodedSource({
               id: nextTabId.current,
@@ -103,11 +108,7 @@ export function useFileImportActions({
               decoded,
             }),
           );
-          const createdTabId = nextTabId.current;
           nextTabId.current += 1;
-          if (decoded.deferredDocumentBytes) {
-            deferredDecodes.push({ bytes: decoded.deferredDocumentBytes, tabId: createdTabId });
-          }
         } catch (error) {
           errors.push(`${normalizeDisplayPath(entry.path)}: ${errorMessage(error)}`);
         }
@@ -124,16 +125,6 @@ export function useFileImportActions({
           ? `${loadedTabs[0].status.message}${suffix}`
           : t('status.loadedFiles', { count: loadedTabs.length.toLocaleString(), suffix });
         updateStatus(message, 'ok');
-        for (const deferred of deferredDecodes) {
-          scheduleDeferredDocumentDecode({
-            bytes: deferred.bytes,
-            runRtonDecodeInWorker,
-            tabId: deferred.tabId,
-            t,
-            updateEditorTab,
-            updateStatus,
-          });
-        }
       }
 
       if (errors.length > 0) {
@@ -147,9 +138,9 @@ export function useFileImportActions({
       openEditorTabs,
       previewPreference,
       renderTextForValue,
-      runRtonDecodeInWorker,
+      runRtonDecodeFileInWorker,
+      runTextParseInWorker,
       t,
-      updateEditorTab,
       updateStatus,
       viewModeRef,
       wasmReady,
@@ -209,7 +200,14 @@ export function useFileImportActions({
           previewPreference,
           viewMode: viewModeRef.current,
         });
-        const decoded = await decodeLoadableEntry(entry, preferredViewMode, preferredEditorSurface, t, runRtonDecodeInWorker);
+        const decoded = await decodeLoadableEntry(
+          entry,
+          preferredViewMode,
+          preferredEditorSurface,
+          t,
+          runRtonDecodeFileInWorker,
+          runTextParseInWorker,
+        );
         const tabId = nextTabId.current;
         const tab = createEditorTabFromDecodedSource({
           id: tabId,
@@ -219,16 +217,6 @@ export function useFileImportActions({
         nextTabId.current += 1;
         setLoadedFiles((files) => files.map((file) => (file.id === fileId ? { ...file, tabId } : file)));
         openEditorTabs([tab]);
-        if (decoded.deferredDocumentBytes) {
-          scheduleDeferredDocumentDecode({
-            bytes: decoded.deferredDocumentBytes,
-            runRtonDecodeInWorker,
-            tabId,
-            t,
-            updateEditorTab,
-            updateStatus,
-          });
-        }
         if (tab.editorSurface === 'text' && tab.currentValue && isPendingTextPreview(tab.editorText)) {
           window.setTimeout(() => renderTextForValue(tab.currentValue as RtonValue, tab.viewMode), 0);
         }
@@ -246,11 +234,11 @@ export function useFileImportActions({
       openEditorTabs,
       previewPreference,
       renderTextForValue,
-      runRtonDecodeInWorker,
+      runRtonDecodeFileInWorker,
+      runTextParseInWorker,
       setLoadedFiles,
       t,
       tabs,
-      updateEditorTab,
       updateStatus,
       viewModeRef,
       wasmReady,
@@ -301,36 +289,60 @@ async function decodeLoadableEntry(
   preferredViewMode: ViewMode,
   preferredEditorSurface: EditorSurface,
   t: Translator,
-  runRtonDecodeInWorker: (bytes: Uint8Array, options?: { includeValue?: boolean; retainDocument?: boolean }) => Promise<RtonDecodeWorkerOutput>,
+  runRtonDecodeFileInWorker: (file: File, options?: { includeValue?: boolean; retainDocument?: boolean; includeBytes?: boolean }) => Promise<RtonDecodeWorkerOutput>,
+  runTextParseInWorker: (text: string, mode: ViewMode) => Promise<TextParseWorkerOutput>,
 ): Promise<DecodedLoadableSource> {
   if (entry.kind !== 'rton') {
-    return decodeLoadableSource(entry, preferredViewMode, preferredEditorSurface, t);
+    const text = await entry.file.text();
+    const mode = entry.kind;
+    const { value, stats } = await runTextParseInWorker(text, mode);
+    const label = loadableFileKindLabel(mode);
+    return {
+      value,
+      editorText: text,
+      surfaceNote: t('format.editable', { label }),
+      sourceBytes: null,
+      binaryBytes: null,
+      binaryEncoding: null,
+      viewMode: mode,
+      editorSurface: 'text',
+      status: { message: t('format.parsed', { label }), tone: 'ok' },
+      stats,
+      parsedJson: null,
+    };
   }
 
-  const bytes = new Uint8Array(await entry.file.arrayBuffer());
-  const largeDocument = bytes.byteLength >= RTON_LARGE_DOCUMENT_THRESHOLD_BYTES && !isEncryptedRtonBytes(bytes);
+  const largeDocument = entry.file.size >= RTON_LARGE_DOCUMENT_THRESHOLD_BYTES;
   if (largeDocument) {
-    const compact = isCompactRtonBytes(bytes);
+    const headerBytes = await readFileHeader(entry.file);
+    const encrypted = isEncryptedRtonBytes(headerBytes);
+    const binaryEncoding = { compact: encrypted ? false : isCompactRtonBytes(headerBytes), encrypted };
     return {
       value: null,
       rtonDocument: null,
       editorText: '',
       surfaceNote: t('format.largeDocumentIndexing'),
-      sourceBytes: bytes,
-      binaryBytes: bytes,
-      binaryEncoding: { compact, encrypted: false },
+      sourceBytes: null,
+      binaryBytes: null,
+      hexByteSource: {
+        kind: 'file',
+        file: entry.file,
+        byteLength: entry.file.size,
+        binaryEncoding,
+      },
+      binaryEncoding,
       viewMode: preferredViewMode,
       editorSurface: 'hex',
       status: { message: t('status.largeRtonOpened'), tone: 'ok' },
       parsedJson: null,
       needsTextPreview: false,
-      deferredDocumentBytes: bytes,
     };
   }
 
-  const { value, document, stats, plainBytes, compact, encrypted } = await runRtonDecodeInWorker(bytes, {
-    includeValue: !largeDocument,
-    retainDocument: largeDocument,
+  const { value, document, stats, plainBytes, compact, encrypted } = await runRtonDecodeFileInWorker(entry.file, {
+    includeValue: true,
+    retainDocument: false,
+    includeBytes: true,
   });
   const useHexSurface = largeDocument || preferredEditorSurface === 'hex';
   const label = loadableFileKindLabel(preferredViewMode);
@@ -375,6 +387,7 @@ function createEditorTabFromDecodedSource({
       surfaceNote: decoded.surfaceNote,
       sourceBytes: decoded.sourceBytes,
       binaryBytes: decoded.binaryBytes,
+      hexByteSource: decoded.hexByteSource ?? null,
       binaryEncoding: decoded.binaryEncoding,
       viewMode: decoded.viewMode,
       editorSurface: decoded.editorSurface,
@@ -390,12 +403,13 @@ function createEditorTabFromDecodedSource({
       surfaceNote: decoded.surfaceNote,
       sourceBytes: decoded.sourceBytes,
       binaryBytes: decoded.binaryBytes,
+      hexByteSource: decoded.hexByteSource ?? null,
       binaryEncoding: decoded.binaryEncoding,
       viewMode: decoded.viewMode,
       editorSurface: decoded.editorSurface,
       status: decoded.status,
       stats: decoded.stats,
-      searchState: decoded.deferredDocumentBytes ? { kind: 'message', message: decoded.surfaceNote } : undefined,
+      searchState: { kind: 'message', message: decoded.surfaceNote },
     });
   }
 
@@ -408,6 +422,7 @@ function createEditorTabFromDecodedSource({
     surfaceNote: decoded.surfaceNote,
     sourceBytes: decoded.sourceBytes,
     binaryBytes: decoded.binaryBytes,
+    hexByteSource: decoded.hexByteSource ?? null,
     binaryEncoding: decoded.binaryEncoding,
     viewMode: decoded.viewMode,
     editorSurface: decoded.editorSurface,
@@ -417,52 +432,8 @@ function createEditorTabFromDecodedSource({
   });
 }
 
-function scheduleDeferredDocumentDecode({
-  bytes,
-  runRtonDecodeInWorker,
-  tabId,
-  t,
-  updateEditorTab,
-  updateStatus,
-}: {
-  bytes: Uint8Array;
-  runRtonDecodeInWorker: (bytes: Uint8Array, options?: { includeValue?: boolean; retainDocument?: boolean }) => Promise<RtonDecodeWorkerOutput>;
-  tabId: number;
-  t: Translator;
-  updateEditorTab: (tabId: number, updater: (tab: EditorTab) => EditorTab) => void;
-  updateStatus: (message: string, tone?: Tone) => void;
-}) {
-  window.setTimeout(() => {
-    void runRtonDecodeInWorker(new Uint8Array(bytes), { includeValue: false, retainDocument: true })
-      .then(({ document, stats, plainBytes, compact }) => {
-        if (!document) {
-          throw new Error(t('status.largeRtonIndexFailed'));
-        }
-
-        updateEditorTab(tabId, (tab) => ({
-          ...tab,
-          sourceBytes: plainBytes,
-          binaryBytes: plainBytes,
-          binaryEncoding: { compact, encrypted: false },
-          rtonDocument: document,
-          stats,
-          surfaceNote: t('format.largeDocumentMode'),
-          searchState: { kind: 'idle' },
-          status: { message: t('status.largeRtonIndexed'), tone: 'ok' },
-        }));
-        updateStatus(t('status.largeRtonIndexed'), 'ok');
-      })
-      .catch((error: unknown) => {
-        const message = `${t('status.largeRtonIndexFailed')}: ${errorMessage(error)}`;
-        updateEditorTab(tabId, (tab) => ({
-          ...tab,
-          surfaceNote: t('format.largeDocumentIndexFailed'),
-          searchState: { kind: 'message', message },
-          status: { message, tone: 'error' },
-        }));
-        updateStatus(message, 'error');
-      });
-  }, 0);
+async function readFileHeader(file: File) {
+  return new Uint8Array(await file.slice(0, Math.min(file.size, 16)).arrayBuffer());
 }
 
 function getPreferredPreview({

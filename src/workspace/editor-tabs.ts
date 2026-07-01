@@ -12,12 +12,14 @@ import type { RtonValue } from '../domain/rton-value';
 import { collectStats, emptyStats, type Stats } from '../domain/rton-value-analysis';
 import type { SearchState } from '../domain/rton-value-editing';
 import type { RtonDocumentRef } from '../domain/rton-document';
+import type { HexByteSource } from '../domain/hex-byte-source';
 
 export type EditorTab = {
   id: number;
   fileName: string;
   sourceBytes: Uint8Array | null;
   binaryBytes: Uint8Array | null;
+  hexByteSource: HexByteSource | null;
   binaryEncoding: RtonBinaryEncoding | null;
   currentValue: RtonValue | null;
   rtonDocument: RtonDocumentRef | null;
@@ -43,6 +45,7 @@ export function createEditorTabFromValue({
   sourceBytes,
   binaryBytes,
   binaryEncoding,
+  hexByteSource = null,
   rtonDocument = null,
   viewMode = 'json',
   editorSurface = 'text',
@@ -58,6 +61,7 @@ export function createEditorTabFromValue({
   sourceBytes: Uint8Array | null;
   binaryBytes?: Uint8Array | null;
   binaryEncoding?: RtonBinaryEncoding | null;
+  hexByteSource?: HexByteSource | null;
   rtonDocument?: RtonDocumentRef | null;
   viewMode?: ViewMode;
   editorSurface?: EditorSurface;
@@ -66,7 +70,8 @@ export function createEditorTabFromValue({
   parsedJson?: JsonValue | null;
 }, t: Translator = translate): EditorTab {
   const actualBinaryBytes = binaryBytes ?? sourceBytes;
-  const actualEditorSurface = editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text';
+  const actualBinaryEncoding = actualBinaryBytes || hexByteSource ? binaryEncoding ?? hexByteSource?.binaryEncoding ?? null : null;
+  const actualEditorSurface = editorSurface === 'hex' && (actualBinaryBytes || hexByteSource) ? 'hex' : 'text';
 
   try {
     let text = editorText;
@@ -85,7 +90,8 @@ export function createEditorTabFromValue({
       fileName,
       sourceBytes,
       binaryBytes: actualBinaryBytes,
-      binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+      hexByteSource,
+      binaryEncoding: actualBinaryEncoding,
       currentValue: value,
       rtonDocument,
       editorText: text,
@@ -107,7 +113,8 @@ export function createEditorTabFromValue({
       fileName,
       sourceBytes,
       binaryBytes: actualBinaryBytes,
-      binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+      hexByteSource,
+      binaryEncoding: actualBinaryEncoding,
       currentValue: value,
       rtonDocument,
       editorText: editorText ?? '',
@@ -134,6 +141,7 @@ export function createEditorTabFromDocument({
   sourceBytes,
   binaryBytes,
   binaryEncoding,
+  hexByteSource = null,
   viewMode = 'json',
   editorSurface = 'hex',
   status,
@@ -146,18 +154,21 @@ export function createEditorTabFromDocument({
   sourceBytes: Uint8Array | null;
   binaryBytes?: Uint8Array | null;
   binaryEncoding?: RtonBinaryEncoding | null;
+  hexByteSource?: HexByteSource | null;
   viewMode?: ViewMode;
   editorSurface?: EditorSurface;
   status: StatusState;
 }): EditorTab {
   const actualBinaryBytes = binaryBytes ?? sourceBytes;
-  const actualEditorSurface = editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text';
+  const actualBinaryEncoding = actualBinaryBytes || hexByteSource ? binaryEncoding ?? hexByteSource?.binaryEncoding ?? null : null;
+  const actualEditorSurface = editorSurface === 'hex' && (actualBinaryBytes || hexByteSource) ? 'hex' : 'text';
   return {
     id,
     fileName,
     sourceBytes,
     binaryBytes: actualBinaryBytes,
-    binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+    hexByteSource,
+    binaryEncoding: actualBinaryEncoding,
     currentValue: null,
     rtonDocument: document,
     editorText,
@@ -182,6 +193,7 @@ export function createEditorTabFromBytes({
   sourceBytes,
   binaryBytes,
   binaryEncoding,
+  hexByteSource = null,
   viewMode = 'json',
   editorSurface = 'hex',
   status,
@@ -195,6 +207,7 @@ export function createEditorTabFromBytes({
   sourceBytes: Uint8Array | null;
   binaryBytes?: Uint8Array | null;
   binaryEncoding?: RtonBinaryEncoding | null;
+  hexByteSource?: HexByteSource | null;
   viewMode?: ViewMode;
   editorSurface?: EditorSurface;
   status: StatusState;
@@ -202,12 +215,14 @@ export function createEditorTabFromBytes({
   searchState?: SearchState;
 }): EditorTab {
   const actualBinaryBytes = binaryBytes ?? sourceBytes;
+  const actualBinaryEncoding = actualBinaryBytes || hexByteSource ? binaryEncoding ?? hexByteSource?.binaryEncoding ?? null : null;
   return {
     id,
     fileName,
     sourceBytes,
     binaryBytes: actualBinaryBytes,
-    binaryEncoding: actualBinaryBytes ? binaryEncoding ?? null : null,
+    hexByteSource,
+    binaryEncoding: actualBinaryEncoding,
     currentValue: null,
     rtonDocument: null,
     editorText,
@@ -216,7 +231,7 @@ export function createEditorTabFromBytes({
     parseError: null,
     stats,
     viewMode,
-    editorSurface: editorSurface === 'hex' && actualBinaryBytes ? 'hex' : 'text',
+    editorSurface: editorSurface === 'hex' && (actualBinaryBytes || hexByteSource) ? 'hex' : 'text',
     surfaceNote: surfaceNote ?? '',
     searchQuery: '',
     searchState: searchState ?? { kind: 'idle' },

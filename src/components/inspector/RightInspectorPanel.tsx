@@ -2,7 +2,7 @@ import { Activity, FileArchive, ListTree, Search } from 'lucide-react';
 import type { Translator } from '../../localization/i18n';
 import type { Stats } from '../../domain/rton-value-analysis';
 import { RTON_SEARCH_MATCH_LIMIT } from '../../domain/rton-value-analysis';
-import type { RtonValuePath, SearchState } from '../../domain/rton-value-editing';
+import type { RtonDocumentEditOperation, RtonValuePath, SearchState } from '../../domain/rton-value-editing';
 import type { RtonValue } from '../../domain/rton-value';
 import type { RtonDocumentRef } from '../../domain/rton-document';
 import type { RtonDocumentChildrenOutput } from '../../hooks/worker-clients';
@@ -11,34 +11,42 @@ import { RtonValueInspector } from './RtonValueInspector';
 
 export function RightInspectorPanel({
   t,
+  canBuildRtonIndex,
   currentValue,
   rtonDocument,
   displayFileName,
   hasActiveFile,
   inputText,
   outputText,
+  rtonIndexBuilding,
   searchQuery,
   searchState,
   stats,
+  onBuildRtonIndex,
   onError,
   onLoadDocumentChildren,
   onNavigate,
+  onRemoteEdit,
   onSearchChange,
   onValueChange,
 }: {
   t: Translator;
+  canBuildRtonIndex: boolean;
   currentValue: RtonValue | null;
   rtonDocument: RtonDocumentRef | null;
   displayFileName: string;
   hasActiveFile: boolean;
   inputText: string;
   outputText: string;
+  rtonIndexBuilding: boolean;
   searchQuery: string;
   searchState: SearchState;
   stats: Stats;
+  onBuildRtonIndex: () => void;
   onError: (message: string) => void;
   onLoadDocumentChildren: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
   onNavigate: (path: RtonValuePath) => void;
+  onRemoteEdit: (operation: RtonDocumentEditOperation) => void;
   onSearchChange: (value: string) => void;
   onValueChange: (path: RtonValuePath, value: RtonValue) => void;
 }) {
@@ -110,10 +118,14 @@ export function RightInspectorPanel({
               state={searchState}
               value={currentValue}
               document={rtonDocument}
+              canBuildIndex={canBuildRtonIndex}
+              indexBuilding={rtonIndexBuilding}
               searchMatchLimit={RTON_SEARCH_MATCH_LIMIT}
               loadDocumentChildren={onLoadDocumentChildren}
+              onBuildIndex={onBuildRtonIndex}
               onChange={onValueChange}
               onNavigate={onNavigate}
+              onRemoteEdit={onRemoteEdit}
               onError={onError}
             />
           </div>

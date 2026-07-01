@@ -7,6 +7,7 @@ import {
   filterLoadedFileItems,
   type LoadedRtonFile,
 } from '../files/loaded-file-items';
+import type { HexByteSource } from '../domain/hex-byte-source';
 
 export function useLoadedFileListState({
   activeTabId,
@@ -14,6 +15,7 @@ export function useLoadedFileListState({
   fileName,
   lang,
   loadedFiles,
+  hexByteSource,
   sourceBytes,
   tabs,
   t,
@@ -24,6 +26,7 @@ export function useLoadedFileListState({
   fileName: string;
   lang: string;
   loadedFiles: LoadedRtonFile[];
+  hexByteSource: HexByteSource | null;
   sourceBytes: Uint8Array | null;
   tabs: EditorTab[];
   t: Translator;
@@ -33,8 +36,8 @@ export function useLoadedFileListState({
   const [fileSearchQuery, setFileSearchQuery] = useState('');
 
   const loadedFileItems = useMemo(
-    () => buildLoadedFileItems({ files: loadedFiles, tabs, activeTabId, fileName, sourceBytes, viewMode, editorSurface, t }),
-    [activeTabId, editorSurface, fileName, lang, loadedFiles, sourceBytes, tabs, viewMode, t],
+    () => buildLoadedFileItems({ files: loadedFiles, tabs, activeTabId, fileName, sourceBytes, hexByteSource, viewMode, editorSurface, t }),
+    [activeTabId, editorSurface, fileName, hexByteSource, lang, loadedFiles, sourceBytes, tabs, viewMode, t],
   );
   const filteredLoadedFileItems = useMemo(
     () => filterLoadedFileItems(loadedFileItems, fileSearchQuery),

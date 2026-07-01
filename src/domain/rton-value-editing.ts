@@ -15,6 +15,25 @@ export type SearchState =
   | { kind: 'message'; message: string }
   | { kind: 'results'; query: string; matches: SearchMatch[]; scanned: number; done: boolean; capped: boolean };
 
+export type RtonDocumentEditOperation =
+  | {
+      kind: 'insertArrayItem';
+      path: RtonValuePath;
+      index: number;
+      value: RtonValue;
+    }
+  | {
+      kind: 'insertObjectEntry';
+      path: RtonValuePath;
+      index: number;
+      key: string;
+      value: RtonValue;
+    }
+  | {
+      kind: 'deleteValue';
+      path: RtonValuePath;
+    };
+
 const RTON_INTEGER_RANGES: Record<RtonIntegerKind, readonly [bigint, bigint]> = {
   i8: [-128n, 127n],
   u8: [0n, 255n],
@@ -229,4 +248,106 @@ export function replaceRtonValueAtPath(root: RtonValue, path: RtonValuePath, nex
   const entry = entries[head.index];
   entries[head.index] = { ...entry, value: replaceRtonValueAtPath(entry.value, tail, nextValue) };
   return { kind: 'object', entries };
+}
+
+export function applyRtonDocumentEdit(root: RtonValue, operation: RtonDocumentEditOperation): RtonValue {
+  if (operation.kind === 'insertArrayItem') {
+    return updateRtonValueAtPath(root, operation.path, (target) => {
+      if (target.kind !== 'array') {
+        throw new Error(translate('error.valuePathInvalid'));
+      }
+      const items = [...target.items];
+      const index = clampInsertIndex(operation.index, items.length);
+      items.splice(index, 0, operation.value);
+      return { kind: 'array', items };
+    });
+  }
+
+  if (operation.kind === 'insertObjectEntry') {
+    return updateRtonValueAtPath(root, operation.path, (target) => {
+      if (target.kind !== 'object') {
+        throw new Error(translate('error.valuePathInvalid'));
+      }
+      const entries = [...target.entries];
+      const index = clampInsertIndex(operation.index, entries.length);
+      entries.splice(index, 0, {
+        key: uniqueObjectKey(entries, operation.key),
+        value: operation.value,
+      });
+      return { kind: 'object', entries };
+    });
+  }
+
+  return deleteRtonValueAtPath(root, operation.path);
+}
+
+function updateRtonValueAtPath(root: RtonValue, path: RtonValuePath, updater: (value: RtonValue) => RtonValue): RtonValue {
+  if (path.length === 0) {
+    return updater(root);
+  }
+
+  const [head, ...tail] = path;
+  if (head.kind === 'array') {
+    if (root.kind !== 'array' || head.index < 0 || head.index >= root.items.length) {
+      throw new Error(translate('error.valuePathInvalid'));
+    }
+    const items = [...root.items];
+    items[head.index] = updateRtonValueAtPath(items[head.index], tail, updater);
+    return { kind: 'array', items };
+  }
+
+  if (root.kind !== 'object' || head.index < 0 || head.index >= root.entries.length) {
+    throw new Error(translate('error.valuePathInvalid'));
+  }
+  const entries = [...root.entries];
+  const entry = entries[head.index];
+  entries[head.index] = { ...entry, value: updateRtonValueAtPath(entry.value, tail, updater) };
+  return { kind: 'object', entries };
+}
+
+function deleteRtonValueAtPath(root: RtonValue, path: RtonValuePath): RtonValue {
+  if (path.length === 0) {
+    throw new Error(translate('error.valuePathInvalid'));
+  }
+
+  const parentPath = path.slice(0, -1);
+  const target = path[path.length - 1];
+  return updateRtonValueAtPath(root, parentPath, (parent) => {
+    if (target.kind === 'array') {
+      if (parent.kind !== 'array' || target.index < 0 || target.index >= parent.items.length) {
+        throw new Error(translate('error.valuePathInvalid'));
+      }
+      const items = [...parent.items];
+      items.splice(target.index, 1);
+      return { kind: 'array', items };
+    }
+
+    if (parent.kind !== 'object' || target.index < 0 || target.index >= parent.entries.length) {
+      throw new Error(translate('error.valuePathInvalid'));
+    }
+    const entries = [...parent.entries];
+    entries.splice(target.index, 1);
+    return { kind: 'object', entries };
+  });
+}
+
+function clampInsertIndex(index: number, length: number) {
+  return Math.max(0, Math.min(length, Math.floor(index)));
+}
+
+function uniqueObjectKey(entries: Array<{ key: string }>, requestedKey: string) {
+  const base = requestedKey.trim() || 'new_key';
+  const existing = new Set(entries.map((entry) => entry.key));
+  if (!existing.has(base)) {
+    return base;
+  }
+
+  for (let suffix = 1; suffix < Number.MAX_SAFE_INTEGER; suffix += 1) {
+    const key = `${base}_${suffix}`;
+    if (!existing.has(key)) {
+      return key;
+    }
+  }
+
+  throw new Error(translate('error.valuePathInvalid'));
 }

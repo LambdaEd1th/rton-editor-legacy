@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -64,6 +65,7 @@ type HexSearchResult = {
 
 const ROW_HEIGHT = 28;
 const OVERSCAN_ROWS = 8;
+const DEFAULT_VIEWPORT_HEIGHT = 720;
 const SEARCH_MATCH_DISPLAY_LIMIT = 5000;
 const HEX_SEARCH_CHUNK_BYTES = 240_000;
 const HEX_SEARCH_FRAME_BUDGET_MS = 8;
@@ -73,6 +75,7 @@ const HEX_CHAR_RE = /^[0-9a-fA-F]$/;
 const HEX_INSPECTOR_DEFAULT_WIDTH = 310;
 const HEX_INSPECTOR_MIN_WIDTH = 220;
 const HEX_INSPECTOR_MAX_WIDTH = 620;
+const HEX_LARGE_FILE_INSPECTOR_LIMIT_BYTES = 2 * 1024 * 1024;
 
 export function HexEditor({
   bytes,
@@ -111,16 +114,23 @@ export function HexEditor({
   const [searchMatches, setSearchMatches] = useState<HexSearchResult>(() => emptySearchResult());
   const rowCount = Math.ceil(bytes.length / bytesPerRow);
   const totalContentHeight = rowCount * ROW_HEIGHT;
+  const effectiveViewportHeight =
+    viewportHeight > 0
+      ? viewportHeight
+      : Math.max(ROW_HEIGHT * 24, Math.floor((typeof window === 'undefined' ? DEFAULT_VIEWPORT_HEIGHT : window.innerHeight) * 0.6));
   const virtualContentHeight = Math.min(totalContentHeight, MAX_VIRTUAL_SCROLL_HEIGHT);
   const scrollScale =
-    totalContentHeight > virtualContentHeight && virtualContentHeight > viewportHeight
-      ? (totalContentHeight - viewportHeight) / Math.max(1, virtualContentHeight - viewportHeight)
+    totalContentHeight > virtualContentHeight && virtualContentHeight > effectiveViewportHeight
+      ? (totalContentHeight - effectiveViewportHeight) / Math.max(1, virtualContentHeight - effectiveViewportHeight)
       : 1;
   const logicalScrollTop = scrollTop * scrollScale;
   const offsetColumnWidth = Math.max(8, Math.max(0, bytes.length - 1).toString(16).length) + 2;
   const searchPattern = useMemo(() => parseSearchPattern(searchMode, searchQuery, t), [lang, searchMode, searchQuery, t]);
   const replacePattern = useMemo(() => parseReplacePattern(searchMode, replaceQuery, t), [lang, replaceQuery, searchMode, t]);
-  const byteInspection = useMemo(() => inspectRtonByte(bytes, selectedOffset), [bytes, selectedOffset]);
+  const byteInspection = useMemo(
+    () => inspectRtonByte(bytes, selectedOffset, { scanStringTables: bytes.length <= HEX_LARGE_FILE_INSPECTOR_LIMIT_BYTES }),
+    [bytes, selectedOffset],
+  );
   const normalizedSelection = useMemo(() => {
     if (!selectionRange) {
       return null;
@@ -177,18 +187,38 @@ export function HexEditor({
   const searchPanelStatusText =
     replaceQuery.length > 0 && !replacePattern.valid ? replacePattern.message : searchStatusText;
 
-  useEffect(() => {
+  const updateViewportHeight = useCallback(() => {
     const scroller = scrollerRef.current;
-    if (!scroller) {
-      return;
-    }
+    const editor = editorRef.current;
+    const clientHeight = scroller?.clientHeight ?? 0;
+    const rectHeight = scroller?.getBoundingClientRect().height ?? 0;
+    const editorHeight = editor?.getBoundingClientRect().height ?? 0;
+    const fallbackHeight = Math.max(0, editorHeight - 31 - (searchPanelVisible ? 46 : 0));
+    const nextHeight = Math.floor(Math.max(clientHeight, rectHeight, fallbackHeight));
+    setViewportHeight((current) => (current === nextHeight ? current : nextHeight));
+  }, [searchPanelVisible]);
 
-    const updateViewportHeight = () => setViewportHeight(scroller.clientHeight);
+  useLayoutEffect(() => {
     updateViewportHeight();
+    const firstFrame = window.requestAnimationFrame(updateViewportHeight);
+    const secondFrame = window.requestAnimationFrame(() => window.requestAnimationFrame(updateViewportHeight));
+    const timeout = window.setTimeout(updateViewportHeight, 0);
     const observer = new ResizeObserver(updateViewportHeight);
-    observer.observe(scroller);
-    return () => observer.disconnect();
-  }, []);
+    if (scrollerRef.current) {
+      observer.observe(scrollerRef.current);
+    }
+    if (editorRef.current) {
+      observer.observe(editorRef.current);
+    }
+    window.addEventListener('resize', updateViewportHeight);
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+      window.clearTimeout(timeout);
+      window.removeEventListener('resize', updateViewportHeight);
+      observer.disconnect();
+    };
+  }, [updateViewportHeight]);
 
   useEffect(() => {
     if (expectedBytesRef.current === bytes) {
@@ -300,17 +330,17 @@ export function HexEditor({
     }
 
     const startRow = Math.max(0, Math.floor(logicalScrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
-    const endRow = Math.min(rowCount, Math.ceil((logicalScrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN_ROWS);
+    const endRow = Math.min(rowCount, Math.ceil((logicalScrollTop + effectiveViewportHeight) / ROW_HEIGHT) + OVERSCAN_ROWS);
     return { startRow, endRow };
-  }, [logicalScrollTop, rowCount, viewportHeight]);
+  }, [effectiveViewportHeight, logicalScrollTop, rowCount]);
 
   const rowToScrollTop = useCallback(
     (rowIndex: number) => {
       const logicalTop = rowIndex * ROW_HEIGHT;
-      const maxScrollTop = Math.max(0, virtualContentHeight - viewportHeight);
+      const maxScrollTop = Math.max(0, virtualContentHeight - effectiveViewportHeight);
       return clampNumber(scrollScale === 1 ? logicalTop : logicalTop / scrollScale, 0, maxScrollTop);
     },
-    [scrollScale, viewportHeight, virtualContentHeight],
+    [effectiveViewportHeight, scrollScale, virtualContentHeight],
   );
 
   const focusOffsetInLength = useCallback(

@@ -1,7 +1,11 @@
 import { collectStats, RTON_SEARCH_MATCH_LIMIT, type Stats } from '../domain/rton-value-analysis';
 import { decodeRtonValueWire, encodeRtonValueWire, type RtonValue } from '../domain/rton-value';
 import {
+  applyRtonDocumentEdit,
   previewRtonValue,
+  replaceRtonValueAtPath,
+  rtonScalarEditText,
+  type RtonDocumentEditOperation,
   type RtonValuePath,
   type SearchMatch,
 } from '../domain/rton-value-editing';
@@ -10,11 +14,17 @@ import type { RemoteRtonValueNode, RtonDocumentRef } from '../domain/rton-docume
 import init, {
   decode_rton_to_value,
   decrypt_rton_data,
+  encode_value_to_rton,
+  encrypt_rton_data,
   value_to_json_text,
 } from '../wasm/rton-editor/rton_editor_wasm';
 
 type StructuredTextMode = 'yaml' | 'toml';
 type RtonDocumentTextMode = 'json' | StructuredTextMode;
+type RtonBinaryEncoding = {
+  compact: boolean;
+  encrypted: boolean;
+};
 
 type RtonDecodeRequest =
   | {
@@ -23,6 +33,15 @@ type RtonDecodeRequest =
       bytes: Uint8Array;
       includeValue: boolean;
       retainDocument: boolean;
+      includeBytes: boolean;
+    }
+  | {
+      action: 'decode';
+      id: number;
+      file: File;
+      includeValue: boolean;
+      retainDocument: boolean;
+      includeBytes: boolean;
     }
   | {
       action: 'children';
@@ -46,10 +65,37 @@ type RtonDecodeRequest =
       path: RtonValuePath;
     }
   | {
+      action: 'byteRange';
+      id: number;
+      documentId: number;
+      start: number;
+      end: number;
+    }
+  | {
       action: 'exportText';
       id: number;
       documentId: number;
       mode: RtonDocumentTextMode;
+    }
+  | {
+      action: 'exportRton';
+      id: number;
+      documentId: number;
+      target: RtonBinaryEncoding;
+      result: 'bytes' | 'size';
+    }
+  | {
+      action: 'updateValue';
+      id: number;
+      documentId: number;
+      path: RtonValuePath;
+      value: RtonValue;
+    }
+  | {
+      action: 'editDocument';
+      id: number;
+      documentId: number;
+      operation: RtonDocumentEditOperation;
     }
   | {
       action: 'replaceDocumentBytes';
@@ -71,7 +117,7 @@ type RtonDecodeResponse =
       value?: RtonValue;
       document?: RtonDocumentRef;
       stats: Stats;
-      plainBytes: Uint8Array;
+      plainBytes?: Uint8Array;
       compact: boolean;
       encrypted: boolean;
       elapsedMs: number;
@@ -100,10 +146,39 @@ type RtonDecodeResponse =
       offset: number | null;
     }
   | {
+      action: 'byteRange';
+      id: number;
+      ok: true;
+      bytes: Uint8Array;
+    }
+  | {
       action: 'exportText';
       id: number;
       ok: true;
       bytes: Uint8Array;
+    }
+  | {
+      action: 'exportRton';
+      id: number;
+      ok: true;
+      byteLength: number;
+      bytes?: Uint8Array;
+    }
+  | {
+      action: 'updateValue';
+      id: number;
+      ok: true;
+      document: RtonDocumentRef;
+      stats: Stats;
+      compact: boolean;
+    }
+  | {
+      action: 'editDocument';
+      id: number;
+      ok: true;
+      document: RtonDocumentRef;
+      stats: Stats;
+      compact: boolean;
     }
   | {
       action: 'replaceDocumentBytes';
@@ -133,12 +208,15 @@ type StoredRtonDocument = {
   bytes: Uint8Array;
   stats: Stats;
   byteLength: number;
+  compact: boolean;
   version: number;
 };
 
 let wasmReady: Promise<void> | null = null;
 let nextDocumentId = 1;
 const documents = new Map<number, StoredRtonDocument>();
+const activeSearchRequests = new Map<number, number>();
+const REMOTE_SCALAR_VALUE_LIMIT = 4_096;
 
 self.addEventListener('message', (event: MessageEvent<RtonDecodeRequest>) => {
   void handleRequest(event.data);
@@ -151,14 +229,22 @@ async function handleRequest(request: RtonDecodeRequest) {
     } else if (request.action === 'children') {
       handleChildrenRequest(request);
     } else if (request.action === 'search') {
-      handleSearchRequest(request);
+      await handleSearchRequest(request);
     } else if (request.action === 'locate') {
       handleLocateRequest(request);
+    } else if (request.action === 'byteRange') {
+      handleByteRangeRequest(request);
     } else if (request.action === 'exportText') {
       await handleExportTextRequest(request);
+    } else if (request.action === 'exportRton') {
+      handleExportRtonRequest(request);
+    } else if (request.action === 'updateValue') {
+      handleUpdateValueRequest(request);
+    } else if (request.action === 'editDocument') {
+      handleEditDocumentRequest(request);
     } else if (request.action === 'replaceDocumentBytes') {
       await handleReplaceDocumentBytesRequest(request);
-    } else {
+    } else if (request.action === 'release') {
       handleReleaseRequest(request);
     }
   } catch (error) {
@@ -174,9 +260,9 @@ async function handleRequest(request: RtonDecodeRequest) {
 async function handleDecodeRequest(request: Extract<RtonDecodeRequest, { action: 'decode' }>) {
   await ensureWasmReady();
   const startedAt = performance.now();
-  const { value, stats, plainBytes, compact, encrypted } = decodeBytesToDocumentData(request.bytes);
-  const document = request.retainDocument ? storeDocument(value, plainBytes, stats) : undefined;
-  const outgoingBytes = request.retainDocument ? new Uint8Array(plainBytes) : plainBytes;
+  const sourceBytes = 'file' in request ? new Uint8Array(await request.file.arrayBuffer()) : request.bytes;
+  const { value, stats, plainBytes, compact, encrypted } = decodeBytesToDocumentData(sourceBytes);
+  const document = request.retainDocument ? storeDocument(value, plainBytes, stats, compact) : undefined;
   const response: RtonDecodeResponse = {
     action: 'decode',
     id: request.id,
@@ -184,12 +270,12 @@ async function handleDecodeRequest(request: Extract<RtonDecodeRequest, { action:
     value: request.includeValue ? value : undefined,
     document,
     stats,
-    plainBytes: outgoingBytes,
+    plainBytes: request.includeBytes ? (request.retainDocument ? new Uint8Array(plainBytes) : plainBytes) : undefined,
     compact,
     encrypted,
     elapsedMs: performance.now() - startedAt,
   };
-  postWorkerMessage(response, [outgoingBytes.buffer as ArrayBuffer]);
+  postWorkerMessage(response, response.plainBytes ? [response.plainBytes.buffer as ArrayBuffer] : undefined);
 }
 
 function handleChildrenRequest(request: Extract<RtonDecodeRequest, { action: 'children' }>) {
@@ -206,9 +292,14 @@ function handleChildrenRequest(request: Extract<RtonDecodeRequest, { action: 'ch
   });
 }
 
-function handleSearchRequest(request: Extract<RtonDecodeRequest, { action: 'search' }>) {
+async function handleSearchRequest(request: Extract<RtonDecodeRequest, { action: 'search' }>) {
   const document = requireDocument(request.documentId);
-  const result = searchDocument(document.value, request.query.trim().toLowerCase(), Math.min(request.limit, RTON_SEARCH_MATCH_LIMIT));
+  activeSearchRequests.set(request.documentId, request.id);
+  const isCurrentSearch = () => activeSearchRequests.get(request.documentId) === request.id;
+  const result = await searchDocument(document.value, request.query.trim().toLowerCase(), Math.min(request.limit, RTON_SEARCH_MATCH_LIMIT), isCurrentSearch);
+  if (isCurrentSearch()) {
+    activeSearchRequests.delete(request.documentId);
+  }
   postWorkerMessage({
     action: 'search',
     id: request.id,
@@ -228,6 +319,19 @@ function handleLocateRequest(request: Extract<RtonDecodeRequest, { action: 'loca
   });
 }
 
+function handleByteRangeRequest(request: Extract<RtonDecodeRequest, { action: 'byteRange' }>) {
+  const document = requireDocument(request.documentId);
+  const start = Math.max(0, Math.min(document.byteLength, Math.floor(request.start)));
+  const end = Math.max(start, Math.min(document.byteLength, Math.ceil(request.end)));
+  const bytes = document.bytes.slice(start, end);
+  postWorkerMessage({
+    action: 'byteRange',
+    id: request.id,
+    ok: true,
+    bytes,
+  }, [bytes.buffer as ArrayBuffer]);
+}
+
 async function handleExportTextRequest(request: Extract<RtonDecodeRequest, { action: 'exportText' }>) {
   const document = requireDocument(request.documentId);
   const text = await formatDocumentText(document.value, request.mode);
@@ -240,6 +344,69 @@ async function handleExportTextRequest(request: Extract<RtonDecodeRequest, { act
   }, [bytes.buffer as ArrayBuffer]);
 }
 
+function handleExportRtonRequest(request: Extract<RtonDecodeRequest, { action: 'exportRton' }>) {
+  const document = requireDocument(request.documentId);
+  const bytes = encodeDocumentRtonBytes(document, request.target);
+  postWorkerMessage({
+    action: 'exportRton',
+    id: request.id,
+    ok: true,
+    byteLength: bytes.byteLength,
+    ...(request.result === 'size' ? {} : { bytes }),
+  }, request.result === 'size' ? undefined : [bytes.buffer as ArrayBuffer]);
+}
+
+function handleUpdateValueRequest(request: Extract<RtonDecodeRequest, { action: 'updateValue' }>) {
+  const current = requireDocument(request.documentId);
+  const nextValue = replaceRtonValueAtPath(current.value, request.path, request.value);
+  const update = commitDocumentValueUpdate(request.documentId, nextValue);
+  postWorkerMessage({
+    action: 'updateValue',
+    id: request.id,
+    ok: true,
+    ...update,
+  });
+}
+
+function handleEditDocumentRequest(request: Extract<RtonDecodeRequest, { action: 'editDocument' }>) {
+  const current = requireDocument(request.documentId);
+  const nextValue = applyRtonDocumentEdit(current.value, request.operation);
+  const update = commitDocumentValueUpdate(request.documentId, nextValue);
+  postWorkerMessage({
+    action: 'editDocument',
+    id: request.id,
+    ok: true,
+    ...update,
+  });
+}
+
+function commitDocumentValueUpdate(documentId: number, nextValue: RtonValue) {
+  const current = requireDocument(documentId);
+  const stats = collectStats(nextValue);
+  const bytes = encode_value_to_rton(encodeRtonValueWire(nextValue), current.compact);
+  const version = current.version + 1;
+  documents.set(documentId, {
+    value: nextValue,
+    bytes,
+    stats,
+    byteLength: bytes.byteLength,
+    compact: current.compact,
+    version,
+  });
+  const document: RtonDocumentRef = {
+    id: documentId,
+    version,
+    root: summarizeNode('$', nextValue, []),
+    stats,
+    byteLength: bytes.byteLength,
+  };
+  return {
+    document,
+    stats,
+    compact: current.compact,
+  };
+}
+
 async function handleReplaceDocumentBytesRequest(request: Extract<RtonDecodeRequest, { action: 'replaceDocumentBytes' }>) {
   await ensureWasmReady();
   const startedAt = performance.now();
@@ -250,6 +417,7 @@ async function handleReplaceDocumentBytesRequest(request: Extract<RtonDecodeRequ
     bytes: storedBytes,
     stats,
     byteLength: storedBytes.byteLength,
+    compact,
     version: (documents.get(request.documentId)?.version ?? 0) + 1,
   });
   const version = documents.get(request.documentId)?.version ?? 1;
@@ -276,6 +444,7 @@ async function handleReplaceDocumentBytesRequest(request: Extract<RtonDecodeRequ
 
 function handleReleaseRequest(request: Extract<RtonDecodeRequest, { action: 'release' }>) {
   documents.delete(request.documentId);
+  activeSearchRequests.delete(request.documentId);
   postWorkerMessage({
     action: 'release',
     id: request.id,
@@ -290,7 +459,7 @@ async function ensureWasmReady() {
   await wasmReady;
 }
 
-function storeDocument(value: RtonValue, bytes: Uint8Array, stats: Stats): RtonDocumentRef {
+function storeDocument(value: RtonValue, bytes: Uint8Array, stats: Stats, compact: boolean): RtonDocumentRef {
   const id = nextDocumentId;
   nextDocumentId += 1;
   const storedBytes = new Uint8Array(bytes);
@@ -299,6 +468,7 @@ function storeDocument(value: RtonValue, bytes: Uint8Array, stats: Stats): RtonD
     bytes: storedBytes,
     stats,
     byteLength: storedBytes.byteLength,
+    compact,
     version: 1,
   });
   return {
@@ -327,6 +497,13 @@ async function formatDocumentText(value: RtonValue, mode: RtonDocumentTextMode) 
 
   const { formatStructuredText } = await import('../domain/format-conversion');
   return formatStructuredText(value, mode);
+}
+
+function encodeDocumentRtonBytes(document: StoredRtonDocument, target: RtonBinaryEncoding) {
+  const plainBytes = document.compact === target.compact
+    ? new Uint8Array(document.bytes)
+    : encode_value_to_rton(encodeRtonValueWire(document.value), target.compact);
+  return target.encrypted ? encrypt_rton_data(plainBytes) : plainBytes;
 }
 
 function requireDocument(id: number) {
@@ -389,9 +566,17 @@ function summarizeNode(label: string, value: RtonValue, path: RtonValuePath): Re
     label,
     kind: value.kind,
     preview: previewRtonValue(value),
+    scalarValue: remoteScalarValue(value),
     childCount: childCount(value),
     path,
   };
+}
+
+function remoteScalarValue(value: RtonValue) {
+  if (value.kind === 'array' || value.kind === 'object') {
+    return undefined;
+  }
+  return rtonScalarEditText(value).length <= REMOTE_SCALAR_VALUE_LIMIT ? value : undefined;
 }
 
 function childCount(value: RtonValue) {
@@ -404,12 +589,19 @@ function childCount(value: RtonValue) {
   return 0;
 }
 
-function searchDocument(value: RtonValue, query: string, limit: number) {
+const SEARCH_WORKER_CHUNK_MS = 12;
+
+async function searchDocument(value: RtonValue, query: string, limit: number, shouldContinue: () => boolean) {
   const matches: SearchMatch[] = [];
   const stack: Array<{ value: RtonValue; path: string; valuePath: RtonValuePath }> = [{ value, path: '$', valuePath: [] }];
   let scanned = 0;
+  let chunkStartedAt = performance.now();
 
   while (stack.length > 0 && matches.length < limit) {
+    if (!shouldContinue()) {
+      break;
+    }
+
     const frame = stack.pop();
     if (!frame) {
       continue;
@@ -439,6 +631,11 @@ function searchDocument(value: RtonValue, query: string, limit: number) {
         });
       }
     }
+
+    if (performance.now() - chunkStartedAt >= SEARCH_WORKER_CHUNK_MS) {
+      await yieldToWorker();
+      chunkStartedAt = performance.now();
+    }
   }
 
   return {
@@ -447,6 +644,10 @@ function searchDocument(value: RtonValue, query: string, limit: number) {
     done: stack.length === 0,
     capped: matches.length >= limit && stack.length > 0,
   };
+}
+
+function yieldToWorker() {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 function childPath(parent: string, key: string) {

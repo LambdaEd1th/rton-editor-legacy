@@ -17,6 +17,7 @@ import {
 } from '../wasm/rton-editor/rton_editor_wasm';
 import type { Stats } from './rton-value-analysis';
 import type { RtonDocumentRef } from './rton-document';
+import type { HexByteSource } from './hex-byte-source';
 
 export type JsonScalar = string | number | boolean | null;
 export type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
@@ -37,6 +38,7 @@ export type DecodedLoadableSource = {
   surfaceNote: string;
   sourceBytes: Uint8Array | null;
   binaryBytes: Uint8Array | null;
+  hexByteSource?: HexByteSource | null;
   binaryEncoding: RtonBinaryEncoding | null;
   viewMode: ViewMode;
   editorSurface: EditorSurface;
@@ -44,7 +46,6 @@ export type DecodedLoadableSource = {
   stats?: Stats;
   parsedJson?: JsonValue | null;
   needsTextPreview?: boolean;
-  deferredDocumentBytes?: Uint8Array;
 };
 
 export function isEncryptedRtonBytes(bytes: Uint8Array) {

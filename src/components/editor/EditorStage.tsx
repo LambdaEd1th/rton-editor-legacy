@@ -2,12 +2,15 @@ import { FolderOpen } from 'lucide-react';
 import { LOADABLE_FILE_HINT } from '../../files/file-loading';
 import type { Translator } from '../../localization/i18n';
 import type { EditorSurface, ViewMode } from '../../domain/rton-codec';
+import type { HexByteSource } from '../../domain/hex-byte-source';
 import { CodeEditor, type EditorJumpTarget } from './CodeEditor';
 import { HexEditor, type HexEditorJumpTarget } from './HexEditor';
+import { LazyHexEditor } from './LazyHexEditor';
 
 export function EditorStage({
   t,
   displayedHexBytes,
+  displayedHexSource,
   editorJumpTarget,
   editorSearchPanelVisible,
   editorSurface,
@@ -18,10 +21,12 @@ export function EditorStage({
   viewMode,
   onEditorChange,
   onHexChange,
+  onReadHexRange,
   onSearchPanelVisibleChange,
 }: {
   t: Translator;
   displayedHexBytes: Uint8Array | null;
+  displayedHexSource: HexByteSource | null;
   editorJumpTarget: EditorJumpTarget | null;
   editorSearchPanelVisible: boolean;
   editorSurface: EditorSurface;
@@ -32,6 +37,7 @@ export function EditorStage({
   viewMode: ViewMode;
   onEditorChange: (value: string) => void;
   onHexChange: (bytes: Uint8Array) => void;
+  onReadHexRange: (source: HexByteSource, start: number, end: number) => Promise<Uint8Array>;
   onSearchPanelVisibleChange: (visible: boolean) => void;
 }) {
   if (hasActiveFile && editorSurface === 'hex' && displayedHexBytes) {
@@ -42,6 +48,20 @@ export function EditorStage({
           jumpTarget={hexJumpTarget}
           searchPanelVisible={editorSearchPanelVisible}
           onChange={onHexChange}
+          onSearchPanelVisibleChange={onSearchPanelVisibleChange}
+        />
+      </section>
+    );
+  }
+
+  if (hasActiveFile && editorSurface === 'hex' && displayedHexSource) {
+    return (
+      <section className="rton-editor-stage">
+        <LazyHexEditor
+          source={displayedHexSource}
+          jumpTarget={hexJumpTarget}
+          searchPanelVisible={editorSearchPanelVisible}
+          readRange={onReadHexRange}
           onSearchPanelVisibleChange={onSearchPanelVisibleChange}
         />
       </section>

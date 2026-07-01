@@ -6,6 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import { useI18n } from '../../localization/use-i18n';
 import type { RtonValue } from '../../domain/rton-value';
 import {
@@ -13,6 +14,7 @@ import {
   rtonScalarEditText,
   rtonScalarPreview,
   rtonValueClass,
+  type RtonDocumentEditOperation,
   type RtonValuePath,
   type SearchState,
   updateRtonScalarText,
@@ -53,24 +55,46 @@ export function RtonValueInspector({
   state,
   value,
   document,
+  canBuildIndex = false,
+  indexBuilding = false,
   searchMatchLimit,
   loadDocumentChildren,
+  onBuildIndex,
   onChange,
   onNavigate,
+  onRemoteEdit,
   onError,
 }: {
   state: SearchState;
   value: RtonValue | null;
   document?: RtonDocumentRef | null;
+  canBuildIndex?: boolean;
+  indexBuilding?: boolean;
   searchMatchLimit: number;
   loadDocumentChildren?: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
+  onBuildIndex?: () => void;
   onChange: (path: RtonValuePath, value: RtonValue) => void;
   onNavigate: (path: RtonValuePath) => void;
+  onRemoteEdit?: (operation: RtonDocumentEditOperation) => void;
   onError: (message: string) => void;
 }) {
   const { t } = useI18n();
   if (state.kind === 'message') {
-    return <div className="rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">{state.message}</div>;
+    return (
+      <div className="grid gap-2 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">
+        <div>{state.message}</div>
+        {canBuildIndex && onBuildIndex && (
+          <button
+            type="button"
+            disabled={indexBuilding}
+            className="w-fit rounded border border-[var(--color-border-strong)] bg-[var(--color-control)] px-2 py-1 text-[var(--color-text-strong)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-60"
+            onClick={onBuildIndex}
+          >
+            {indexBuilding ? t('inspector.indexBuilding') : t('inspector.buildIndex')}
+          </button>
+        )}
+      </div>
+    );
   }
 
   if (state.kind === 'results') {
@@ -113,7 +137,32 @@ export function RtonValueInspector({
   }
 
   if (!value && document && loadDocumentChildren) {
-    return <RemoteRtonValueTree document={document} loadChildren={loadDocumentChildren} onNavigate={onNavigate} onError={onError} />;
+    return (
+      <RemoteRtonValueTree
+        document={document}
+        loadChildren={loadDocumentChildren}
+        onChange={onChange}
+        onNavigate={onNavigate}
+        onRemoteEdit={onRemoteEdit}
+        onError={onError}
+      />
+    );
+  }
+
+  if (!value && canBuildIndex && onBuildIndex) {
+    return (
+      <div className="grid gap-2 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-soft)] p-3 text-[var(--color-warning)]">
+        <div>{t('inspector.indexNotBuilt')}</div>
+        <button
+          type="button"
+          disabled={indexBuilding}
+          className="w-fit rounded border border-[var(--color-border-strong)] bg-[var(--color-control)] px-2 py-1 text-[var(--color-text-strong)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-60"
+          onClick={onBuildIndex}
+        >
+          {indexBuilding ? t('inspector.indexBuilding') : t('inspector.buildIndex')}
+        </button>
+      </div>
+    );
   }
 
   if (!value) {
@@ -126,12 +175,16 @@ export function RtonValueInspector({
 function RemoteRtonValueTree({
   document,
   loadChildren,
+  onChange,
   onNavigate,
+  onRemoteEdit,
   onError,
 }: {
   document: RtonDocumentRef;
   loadChildren: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
+  onChange: (path: RtonValuePath, value: RtonValue) => void;
   onNavigate: (path: RtonValuePath) => void;
+  onRemoteEdit?: (operation: RtonDocumentEditOperation) => void;
   onError: (message: string) => void;
 }) {
   return (
@@ -141,7 +194,9 @@ function RemoteRtonValueTree({
       node={document.root}
       depth={0}
       loadChildren={loadChildren}
+      onChange={onChange}
       onNavigate={onNavigate}
+      onRemoteEdit={onRemoteEdit}
       onError={onError}
     />
   );
@@ -152,14 +207,18 @@ function RemoteRtonValueTreeNode({
   node,
   depth,
   loadChildren,
+  onChange,
   onNavigate,
+  onRemoteEdit,
   onError,
 }: {
   documentId: number;
   node: RemoteRtonValueNode;
   depth: number;
   loadChildren: (documentId: number, path: RtonValuePath, offset: number, limit: number) => Promise<RtonDocumentChildrenOutput>;
+  onChange: (path: RtonValuePath, value: RtonValue) => void;
   onNavigate: (path: RtonValuePath) => void;
+  onRemoteEdit?: (operation: RtonDocumentEditOperation) => void;
   onError: (message: string) => void;
 }) {
   const { t } = useI18n();
@@ -199,6 +258,7 @@ function RemoteRtonValueTreeNode({
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="my-0.5">
         <summary className="cursor-pointer rounded px-1 py-1 hover:bg-[var(--color-control-hover)]">
           <RemoteNodeLabel node={node} onNavigate={onNavigate} />
+          <RemoteNodeActions node={node} onEdit={onRemoteEdit} />
         </summary>
         {open && (
           <div className="rton-value-tree-children" style={{ '--rton-value-depth': depth + 1 } as CSSProperties}>
@@ -209,7 +269,9 @@ function RemoteRtonValueTreeNode({
                 node={child}
                 depth={depth + 1}
                 loadChildren={loadChildren}
+                onChange={onChange}
                 onNavigate={onNavigate}
+                onRemoteEdit={onRemoteEdit}
                 onError={onError}
               />
             ))}
@@ -234,8 +296,96 @@ function RemoteRtonValueTreeNode({
 
   return (
     <div className="rton-value-scalar-row" onClick={() => onNavigate(node.path)}>
-      <RemoteNodeLabel node={node} onNavigate={onNavigate} />
+      <div className="rton-value-name-cell">
+        <button
+          type="button"
+          className="rton-value-node-link"
+          onClick={(event) => {
+            event.stopPropagation();
+            onNavigate(node.path);
+          }}
+        >
+          {node.label}
+        </button>
+        <RemoteNodeActions node={node} onEdit={onRemoteEdit} />
+      </div>
+      {node.scalarValue ? (
+        <>
+          <div className="rton-value-kind-cell">
+            <RtonValueKindSelect value={node.scalarValue} path={node.path} onChange={onChange} onError={onError} />
+          </div>
+          <div className="rton-value-editor-cell">
+            <RtonScalarEditor value={node.scalarValue} path={node.path} onChange={onChange} onError={onError} />
+          </div>
+        </>
+      ) : (
+        <>
+          <span className="ml-2 rounded border border-[var(--color-border)] bg-[var(--color-control)] px-2 py-0.5 text-[var(--color-text-muted)]">
+            {node.kind}
+          </span>
+          <span className="ml-2 text-[var(--color-text-muted)]">{node.preview}</span>
+        </>
+      )}
     </div>
+  );
+}
+
+function RemoteNodeActions({
+  node,
+  onEdit,
+}: {
+  node: RemoteRtonValueNode;
+  onEdit?: (operation: RtonDocumentEditOperation) => void;
+}) {
+  const { t } = useI18n();
+  if (!onEdit) {
+    return null;
+  }
+
+  const canInsertChild = node.kind === 'array' || node.kind === 'object';
+  const canDelete = node.path.length > 0;
+  if (!canInsertChild && !canDelete) {
+    return null;
+  }
+
+  const runAction = (event: ReactMouseEvent<HTMLButtonElement>, operation: RtonDocumentEditOperation) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onEdit(operation);
+  };
+
+  return (
+    <span className="rton-value-node-actions">
+      {canInsertChild && (
+        <button
+          type="button"
+          className="rton-value-action-button"
+          title={t('inspector.addChild')}
+          aria-label={t('inspector.addChild')}
+          onClick={(event) =>
+            runAction(
+              event,
+              node.kind === 'array'
+                ? { kind: 'insertArrayItem', path: node.path, index: node.childCount, value: { kind: 'null' } }
+                : { kind: 'insertObjectEntry', path: node.path, index: node.childCount, key: 'new_key', value: { kind: 'null' } },
+            )
+          }
+        >
+          <Plus className="h-3 w-3" />
+        </button>
+      )}
+      {canDelete && (
+        <button
+          type="button"
+          className="rton-value-action-button"
+          title={t('inspector.deleteNode')}
+          aria-label={t('inspector.deleteNode')}
+          onClick={(event) => runAction(event, { kind: 'deleteValue', path: node.path })}
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      )}
+    </span>
   );
 }
 

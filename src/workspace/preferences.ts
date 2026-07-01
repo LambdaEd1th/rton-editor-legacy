@@ -5,9 +5,9 @@ export type PreviewPreference = ViewMode | 'rton';
 
 export const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
 
-const THEME_PREFERENCE_KEY = 'rton-editor-theme-preference';
-const LINE_WRAPPING_PREFERENCE_KEY = 'rton-editor-line-wrapping';
-const PREVIEW_PREFERENCE_KEY = 'rton-editor-preview-preference';
+const THEME_PREFERENCE_KEY = 'rton-editor-legacy-theme-preference';
+const LINE_WRAPPING_PREFERENCE_KEY = 'rton-editor-legacy-line-wrapping';
+const PREVIEW_PREFERENCE_KEY = 'rton-editor-legacy-preview-preference';
 
 export function readThemePreference(): ThemePreference {
   try {

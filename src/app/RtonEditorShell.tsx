@@ -11,12 +11,14 @@ import type { RtonEditorController } from './controller';
 export function RtonEditorShell({ controller }: { controller: RtonEditorController }) {
   const {
     activeTabId,
+    canBuildRtonIndex,
     canOpenHexEditor,
     compactOutput,
     currentValue,
     displayFileName,
     displaySurfaceNote,
     displayedHexBytes,
+    displayedHexSource,
     dragging,
     editorJumpTarget,
     editorSearchPanelVisible,
@@ -39,6 +41,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
     outputText,
     rightPanelWidth,
     rtonDocument,
+    rtonIndexBuilding,
     searchQuery,
     searchState,
     selectedFileCount,
@@ -56,6 +59,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
     workspaceStyle,
     onActivateTab,
     onBatchExportSelectedFiles,
+    onBuildRtonIndex,
     onClearFileSearch,
     onClearSelectedFiles,
     onCloseTab,
@@ -79,7 +83,9 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
     onOpenFiles,
     onOpenFolder,
     onOpenHexEditor,
+    onReadHexRange,
     onResizePanel,
+    onRtonDocumentEdit,
     onRtonValueNavigate,
     onRtonValueUpdate,
     onSearchChange,
@@ -177,6 +183,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
           <EditorStage
             t={t}
             displayedHexBytes={displayedHexBytes}
+            displayedHexSource={displayedHexSource}
             editorJumpTarget={editorJumpTarget}
             editorSearchPanelVisible={editorSearchPanelVisible}
             editorSurface={editorSurface}
@@ -187,6 +194,7 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
             viewMode={viewMode}
             onEditorChange={onEditorChange}
             onHexChange={onHexChange}
+            onReadHexRange={onReadHexRange}
             onSearchPanelVisibleChange={onEditorSearchPanelVisibleChange}
           />
 
@@ -194,18 +202,22 @@ export function RtonEditorShell({ controller }: { controller: RtonEditorControll
 
           <RightInspectorPanel
             t={t}
+            canBuildRtonIndex={canBuildRtonIndex}
             currentValue={currentValue}
             rtonDocument={rtonDocument}
             displayFileName={displayFileName}
             hasActiveFile={hasActiveFile}
             inputText={inputText}
             outputText={outputText}
+            rtonIndexBuilding={rtonIndexBuilding}
             searchQuery={searchQuery}
             searchState={searchState}
             stats={stats}
+            onBuildRtonIndex={onBuildRtonIndex}
             onError={onInspectorError}
             onLoadDocumentChildren={onLoadDocumentChildren}
             onNavigate={onRtonValueNavigate}
+            onRemoteEdit={onRtonDocumentEdit}
             onSearchChange={onSearchChange}
             onValueChange={onRtonValueUpdate}
           />

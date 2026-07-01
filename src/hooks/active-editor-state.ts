@@ -5,6 +5,7 @@ import type { Translator } from '../localization/i18n';
 import { emptyStats } from '../domain/rton-value-analysis';
 import type { RtonValue } from '../domain/rton-value';
 import type { RtonDocumentRef } from '../domain/rton-document';
+import type { HexByteSource } from '../domain/hex-byte-source';
 import type {
   EditorSurface,
   JsonValue,
@@ -26,6 +27,7 @@ export function useActiveEditorState({
   const [fileName, setFileName] = useState('');
   const [sourceBytes, setSourceBytes] = useState<Uint8Array | null>(null);
   const [binaryBytes, setBinaryBytes] = useState<Uint8Array | null>(null);
+  const [hexByteSource, setHexByteSource] = useState<HexByteSource | null>(null);
   const [binaryEncoding, setBinaryEncoding] = useState<RtonBinaryEncoding | null>(null);
   const [currentValue, setCurrentValue] = useState<RtonValue | null>(null);
   const [rtonDocument, setRtonDocument] = useState<RtonDocumentRef | null>(null);
@@ -60,10 +62,10 @@ export function useActiveEditorState({
   }, [viewMode]);
 
   useEffect(() => {
-    if (editorSurface === 'hex' && !binaryBytes) {
+    if (editorSurface === 'hex' && !binaryBytes && !hexByteSource) {
       setEditorSurface('text');
     }
-  }, [binaryBytes, editorSurface]);
+  }, [binaryBytes, editorSurface, hexByteSource]);
 
   useEffect(() => {
     currentValueRef.current = currentValue;
@@ -95,6 +97,7 @@ export function useActiveEditorState({
     editorText,
     encryptOutput,
     fileName,
+    hexByteSource,
     hexJumpTarget,
     lastOutputBytes,
     parseError,
@@ -110,6 +113,7 @@ export function useActiveEditorState({
     setEncryptOutput,
     setFileName,
     setHexJumpTarget,
+    setHexByteSource,
     setLastOutputBytes,
     setParseError,
     setParsedJson,

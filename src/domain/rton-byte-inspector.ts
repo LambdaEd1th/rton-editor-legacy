@@ -152,7 +152,11 @@ const RTON_TAGS = new Map<number, RtonTagDefinition>([
   [0xff, { name: 'ObjectEnd', category: 'container', payloadKind: 'none' }],
 ]);
 
-export function inspectRtonByte(bytes: Uint8Array, offset: number): RtonByteInspection | null {
+export function inspectRtonByte(
+  bytes: Uint8Array,
+  offset: number,
+  options: { scanStringTables?: boolean } = {},
+): RtonByteInspection | null {
   if (bytes.length === 0 || offset < 0 || offset >= bytes.length) {
     return null;
   }
@@ -162,7 +166,7 @@ export function inspectRtonByte(bytes: Uint8Array, offset: number): RtonByteInsp
   const tag = tagDefinition
     ? { byte, hex: byteToHex(byte), ...tagDefinition }
     : null;
-  const tables = maybeCollectStringTables(bytes, offset);
+  const tables = options.scanStringTables === false ? null : maybeCollectStringTables(bytes, offset);
   const stringInfo = inspectStringInfo(bytes, offset, tables);
 
   return {

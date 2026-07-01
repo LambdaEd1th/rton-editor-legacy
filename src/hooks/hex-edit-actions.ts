@@ -13,11 +13,13 @@ import {
 } from '../domain/rton-codec';
 import type { RtonValue } from '../domain/rton-value';
 import type { RtonDocumentRef } from '../domain/rton-document';
+import type { HexByteSource } from '../domain/hex-byte-source';
 import type { RtonDocumentByteUpdateOutput } from './worker-clients';
 
 export function useHexEditActions({
   activeTabId,
   binaryBytes,
+  hexByteSource,
   clearPendingWork,
   compactOutput,
   currentValueRef,
@@ -27,6 +29,7 @@ export function useHexEditActions({
   renderTextForValue,
   setBinaryBytes,
   setBinaryEncoding,
+  setHexByteSource,
   setCurrentValueState,
   setEditorSurface,
   setLastOutputBytes,
@@ -44,6 +47,7 @@ export function useHexEditActions({
 }: {
   activeTabId: number | null;
   binaryBytes: Uint8Array | null;
+  hexByteSource: HexByteSource | null;
   clearPendingWork: () => void;
   compactOutput: boolean;
   currentValueRef: { current: RtonValue | null };
@@ -53,6 +57,7 @@ export function useHexEditActions({
   renderTextForValue: (value: RtonValue, mode: ViewMode) => boolean;
   setBinaryBytes: (bytes: Uint8Array | null) => void;
   setBinaryEncoding: (encoding: RtonBinaryEncoding | null) => void;
+  setHexByteSource: (source: HexByteSource | null) => void;
   setCurrentValueState: (value: RtonValue | null) => void;
   setEditorSurface: (surface: 'text' | 'hex') => void;
   setLastOutputBytes: (bytes: number | null) => void;
@@ -74,7 +79,7 @@ export function useHexEditActions({
       return;
     }
 
-    if (binaryBytes) {
+    if (binaryBytes || hexByteSource) {
       setEditorSurface('hex');
       setSurfaceNote(t('format.rtonEditable'));
       return;
@@ -89,6 +94,7 @@ export function useHexEditActions({
     try {
       const bytes = encodeRtonOutputBytes(value, compactOutput, false);
       setBinaryBytes(bytes);
+      setHexByteSource(null);
       setBinaryEncoding({ compact: compactOutput, encrypted: false });
       setSourceBytes(bytes);
       setLastOutputBytes(null);
@@ -103,10 +109,12 @@ export function useHexEditActions({
     binaryBytes,
     compactOutput,
     currentValueRef,
+    hexByteSource,
     parseError,
     setBinaryBytes,
     setBinaryEncoding,
     setEditorSurface,
+    setHexByteSource,
     setLastOutputBytes,
     setSourceBytes,
     setSurfaceNote,
@@ -122,6 +130,7 @@ export function useHexEditActions({
 
       clearPendingWork();
       setBinaryBytes(nextBytes);
+      setHexByteSource(null);
       setSourceBytes(nextBytes);
       setLastOutputBytes(null);
 
@@ -194,6 +203,7 @@ export function useHexEditActions({
       setBinaryBytes,
       setBinaryEncoding,
       setCurrentValueState,
+      setHexByteSource,
       setLastOutputBytes,
       setParseError,
       setParsedJson,

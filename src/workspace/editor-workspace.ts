@@ -6,12 +6,14 @@ import type { RtonValue } from '../domain/rton-value';
 import type { Stats } from '../domain/rton-value-analysis';
 import type { SearchState } from '../domain/rton-value-editing';
 import type { RtonDocumentRef } from '../domain/rton-document';
+import type { HexByteSource } from '../domain/hex-byte-source';
 
 export type EditorTabSnapshotInput = {
   activeTabId: number | null;
   fileName: string;
   sourceBytes: Uint8Array | null;
   binaryBytes: Uint8Array | null;
+  hexByteSource: HexByteSource | null;
   binaryEncoding: RtonBinaryEncoding | null;
   currentValue: RtonValue | null;
   rtonDocument: RtonDocumentRef | null;
@@ -45,6 +47,7 @@ export function createActiveEditorTabSnapshot(input: EditorTabSnapshotInput): Ed
     fileName: input.fileName,
     sourceBytes: input.sourceBytes,
     binaryBytes: input.binaryBytes,
+    hexByteSource: input.hexByteSource,
     binaryEncoding: input.binaryEncoding,
     currentValue: input.currentValue,
     rtonDocument: input.rtonDocument,

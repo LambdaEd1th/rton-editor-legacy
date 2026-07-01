@@ -50,12 +50,14 @@ export async function createBatchExportArchive<TItem extends BatchExportItem>({
   resolveValue,
   encodeValue,
   describeError,
+  onProgress,
 }: {
   items: TItem[];
   mode: BatchExportMode;
   resolveValue: (item: TItem) => Promise<RtonValue> | RtonValue;
   encodeValue: (value: RtonValue, mode: BatchExportMode) => Uint8Array;
   describeError: (error: unknown) => string;
+  onProgress?: (completed: number, total: number) => void;
 }): Promise<BatchExportArchiveResult> {
   const usedPaths = new Set<string>();
   const zipEntries: ZipFileEntry[] = [];
@@ -74,9 +76,12 @@ export async function createBatchExportArchive<TItem extends BatchExportItem>({
     }
 
     if (index % 24 === 23) {
+      onProgress?.(index + 1, items.length);
       await yieldToBrowser();
     }
   }
+
+  onProgress?.(items.length, items.length);
 
   return {
     exportedCount: zipEntries.length,

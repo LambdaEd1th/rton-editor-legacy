@@ -9,6 +9,7 @@ export type RemoteRtonValueNode = {
   label: string;
   kind: RtonValue['kind'];
   preview: string;
+  scalarValue?: RtonValue;
   childCount: number;
   path: RtonValuePath;
 };

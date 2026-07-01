@@ -26,6 +26,14 @@ type ByteTransformRequest =
       target: ByteTransformTarget;
       bytes: Uint8Array;
       result?: ByteTransformResultKind;
+    }
+  | {
+      id: number;
+      kind: 'file';
+      source: ByteTransformTarget;
+      target: ByteTransformTarget;
+      file: File;
+      result?: ByteTransformResultKind;
     };
 
 type ByteTransformResultKind = 'bytes' | 'size';
@@ -56,9 +64,7 @@ async function handleRequest(request: ByteTransformRequest) {
   try {
     await ensureWasmReady();
     const startedAt = performance.now();
-    const bytes = request.kind === 'bytes'
-      ? transformRtonBytes(request.bytes, request.source, request.target)
-      : transformRtonValue(request.value, request.target);
+    const bytes = await transformRequestBytes(request);
     const response: ByteTransformResponse = {
       id: request.id,
       target: request.target,
@@ -89,6 +95,19 @@ async function ensureWasmReady() {
 function transformRtonValue(value: RtonValue, target: ByteTransformTarget) {
   const encoded = encode_value_to_rton(encodeRtonValueWire(value), target.compact);
   return target.encrypted ? encrypt_rton_data(encoded) : encoded;
+}
+
+async function transformRequestBytes(request: ByteTransformRequest) {
+  if (request.kind === 'value') {
+    return transformRtonValue(request.value, request.target);
+  }
+
+  if (request.kind === 'file') {
+    const bytes = new Uint8Array(await request.file.arrayBuffer());
+    return transformRtonBytes(bytes, request.source, request.target);
+  }
+
+  return transformRtonBytes(request.bytes, request.source, request.target);
 }
 
 function transformRtonBytes(bytes: Uint8Array, source: ByteTransformTarget, target: ByteTransformTarget) {

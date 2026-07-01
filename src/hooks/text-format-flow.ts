@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { Translator } from '../localization/i18n';
-import { collectStats, emptyStats, type Stats } from '../domain/rton-value-analysis';
+import { emptyStats, type Stats } from '../domain/rton-value-analysis';
 import {
-  parseJsonTextToRtonValue,
-  rtonValueToJsonValue,
   type EditorSurface,
   type JsonValue,
   type Tone,
@@ -79,11 +77,10 @@ export function useTextFormatFlow({
         setSurfaceNote(response.truncated ? t('format.previewTruncated', { label }) : t('format.editable', { label }));
         updateStatus(response.truncated ? t('format.generatedTruncated', { label }) : t('format.generated', { label }), response.truncated ? 'warn' : 'ok');
       } else if (response.ok && response.action === 'parse') {
-        const plainValue = response.plainValue as JsonValue;
         setCurrentValueState(response.value);
-        setParsedJson(plainValue);
+        setParsedJson(null);
         setParseError(null);
-        setStats(collectStats(response.value));
+        setStats(response.stats);
         setSearchState({ kind: 'idle' });
         setSurfaceNote(t('format.editable', { label }));
         updateStatus(t('format.parsed', { label }), 'ok');
@@ -94,7 +91,9 @@ export function useTextFormatFlow({
       } else if (!response.ok && response.action === 'parse') {
         const message = t('format.parseFailed', { label, message: response.error });
         setCurrentValueState(null);
+        setParsedJson(null);
         setParseError(message);
+        setStats(emptyStats());
         setSearchState({ kind: 'message', message });
         setSurfaceNote(message);
         updateStatus(message, 'error');
@@ -118,12 +117,13 @@ export function useTextFormatFlow({
       } else {
         const parseMessage = t('format.parseFailed', { label, message });
         setParseError(parseMessage);
+        setStats(emptyStats());
         setSearchState({ kind: 'message', message: parseMessage });
         setSurfaceNote(parseMessage);
         updateStatus(parseMessage, 'error');
       }
     },
-    [setEditorTextState, setParseError, setSearchState, setSurfaceNote, t, updateStatus],
+    [setEditorTextState, setParseError, setSearchState, setStats, setSurfaceNote, t, updateStatus],
   );
 
   const {
@@ -149,40 +149,31 @@ export function useTextFormatFlow({
         return;
       }
 
-      try {
-        const value = parseJsonTextToRtonValue(jsonText);
-        const plainValue = rtonValueToJsonValue(value);
-        setCurrentValueState(value);
-        setParsedJson(plainValue);
-        setParseError(null);
-        setStats(collectStats(value));
-        if (options.updateEditor || viewModeRef.current === 'json') {
-          setEditorTextState(jsonText);
-          setSurfaceNote(t('format.editable', { label: viewModeRef.current.toUpperCase() }));
-        }
-        if (options.statusMessage) {
-          updateStatus(options.statusMessage, 'ok');
-        }
-      } catch (error) {
-        const message = errorMessage(error);
-        setCurrentValueState(null);
-        setParsedJson(null);
-        setParseError(message);
-        setStats(emptyStats());
-        setSearchState({ kind: 'message', message });
-        updateStatus(message, 'error');
+      const mode = 'json';
+      const requestId = beginFormatWorkerRequest('parse', mode);
+      scheduleFormatWorkerTimeout(requestId, mode, 'parse');
+      postFormatWorkerMessage({
+        action: 'parse',
+        id: requestId,
+        mode,
+        text: jsonText,
+      });
+      if (options.updateEditor || viewModeRef.current === 'json') {
+        setEditorTextState(jsonText);
+        setSurfaceNote(t('format.editable', { label: viewModeRef.current.toUpperCase() }));
+      }
+      if (options.statusMessage) {
+        updateStatus(options.statusMessage, 'ok');
       }
     },
     [
+      beginFormatWorkerRequest,
       cancelSearch,
       clearParseTimer,
-      setCurrentValueState,
       setEditorTextState,
-      setParseError,
-      setParsedJson,
-      setSearchState,
-      setStats,
       setSurfaceNote,
+      postFormatWorkerMessage,
+      scheduleFormatWorkerTimeout,
       t,
       updateStatus,
       viewModeRef,
@@ -356,8 +347,4 @@ export function useTextFormatFlow({
     scheduleEditorParse,
     setViewMode,
   };
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -61,8 +61,16 @@ import {
   LEFT_PANEL_DEFAULT_WIDTH,
   RIGHT_PANEL_DEFAULT_WIDTH,
 } from '../workspace/panel-layout';
-import { useByteTransformWorker, useRtonDecodeWorker } from '../hooks/worker-clients';
+import {
+  useBatchExportWorker,
+  useByteTransformWorker,
+  useRtonDecodeWorker,
+  useTextTaskWorker,
+  type RtonDocumentValueUpdateOutput,
+} from '../hooks/worker-clients';
 import { buildOutputText } from './output-summary';
+import { readHexByteSourceRange, type HexByteSource } from '../domain/hex-byte-source';
+import type { RtonDocumentEditOperation } from '../domain/rton-value-editing';
 
 const SEARCH_DEBOUNCE_MS = 140;
 const EDITOR_PARSE_DEBOUNCE_MS = 450;
@@ -85,11 +93,13 @@ export function useRtonEditorController() {
   const [lineWrapping, setLineWrapping] = useState(() => readLineWrappingPreference());
   const [previewPreference, setPreviewPreference] = useState<PreviewPreference>(() => readPreviewPreference());
   const [editorSearchPanelVisible, setEditorSearchPanelVisible] = useState(false);
+  const [rtonIndexBuilding, setRtonIndexBuilding] = useState(false);
 
   const nextTabId = useRef(1);
   const nextLoadedFileId = useRef(1);
   const nextEditorJumpId = useRef(1);
   const nextHexJumpId = useRef(1);
+  const batchExportModeRef = useRef<BatchExportMode>('rton');
   const {
     binaryBytes,
     binaryEncoding,
@@ -101,6 +111,7 @@ export function useRtonEditorController() {
     editorText,
     encryptOutput,
     fileName,
+    hexByteSource,
     hexJumpTarget,
     lastOutputBytes,
     parseError,
@@ -115,6 +126,7 @@ export function useRtonEditorController() {
     setEditorTextState,
     setEncryptOutput,
     setFileName,
+    setHexByteSource,
     setHexJumpTarget,
     setLastOutputBytes,
     setParseError,
@@ -137,14 +149,38 @@ export function useRtonEditorController() {
     t,
     onError: (message) => updateStatus(message, 'error'),
   });
+  const { runTextExportInWorker, runTextParseInWorker } = useTextTaskWorker({
+    t,
+    onError: (message) => updateStatus(message, 'error'),
+  });
+  const { runBatchExportInWorker } = useBatchExportWorker({
+    t,
+    onError: (message) => updateStatus(message, 'error'),
+    onProgress: (completed, total) => {
+      updateStatus(
+        t('status.batchProgress', {
+          format: batchExportModeRef.current.toUpperCase(),
+          completed: completed.toLocaleString(),
+          total: total.toLocaleString(),
+        }),
+        'warn',
+      );
+    },
+  });
   const {
+    editRtonDocument,
+    getRtonDocumentByteRange,
     getRtonDocumentChildren,
+    exportRtonDocumentBytes,
+    exportRtonDocumentSize,
     exportRtonDocumentText,
     locateRtonDocumentOffset,
     releaseRtonDocument,
     replaceRtonDocumentBytes,
+    runRtonDecodeFileInWorker,
     runRtonDecodeInWorker,
     searchRtonDocument,
+    updateRtonDocumentValue,
   } = useRtonDecodeWorker({
     t,
     onError: (message) => updateStatus(message, 'error'),
@@ -220,6 +256,7 @@ export function useRtonEditorController() {
         fileName,
         sourceBytes,
         binaryBytes,
+        hexByteSource,
         binaryEncoding,
         currentValue: currentValueRef.current,
         rtonDocument,
@@ -242,6 +279,7 @@ export function useRtonEditorController() {
       editorText,
       editorSurface,
       fileName,
+      hexByteSource,
       lastOutputBytes,
       parseError,
       parsedJson,
@@ -266,6 +304,7 @@ export function useRtonEditorController() {
       setFileName('');
       setSourceBytes(null);
       setBinaryBytes(null);
+      setHexByteSource(null);
       setBinaryEncoding(null);
       setCurrentValueState(null);
       setRtonDocument(null);
@@ -284,7 +323,7 @@ export function useRtonEditorController() {
       setEditorSearchPanelVisible(false);
       setStatus(nextStatus);
     },
-    [clearPendingWork, previewPreference, setCurrentValueState, setRtonDocument, t],
+    [clearPendingWork, previewPreference, setCurrentValueState, setHexByteSource, setRtonDocument, t],
   );
 
   const restoreEditorTab = useCallback(
@@ -296,6 +335,7 @@ export function useRtonEditorController() {
       setFileName(tab.fileName);
       setSourceBytes(tab.sourceBytes);
       setBinaryBytes(tab.binaryBytes);
+      setHexByteSource(tab.hexByteSource);
       setBinaryEncoding(tab.binaryEncoding);
       setCurrentValueState(tab.currentValue);
       setRtonDocument(tab.rtonDocument);
@@ -313,7 +353,7 @@ export function useRtonEditorController() {
       setSearchState(tab.searchState);
       setStatus(tab.status);
     },
-    [clearPendingWork, setCurrentValueState, setRtonDocument],
+    [clearPendingWork, setCurrentValueState, setHexByteSource, setRtonDocument],
   );
 
   const syncActiveTab = useCallback(
@@ -358,18 +398,74 @@ export function useRtonEditorController() {
     [activeTabId, restoreEditorTab, syncActiveTab],
   );
 
-  const updateEditorTab = useCallback(
-    (tabId: number, updater: (tab: EditorTab) => EditorTab) => {
-      setTabs((currentTabs) => currentTabs.map((tab) => (tab.id === tabId ? updater(tab) : tab)));
-      if (activeTabId === tabId) {
-        const snapshot = snapshotActiveTab();
-        if (snapshot) {
-          restoreEditorTab(updater(snapshot));
+  const buildRtonIndex = useCallback(() => {
+    if (activeTabId === null || (!binaryBytes && !hexByteSource) || rtonDocument || currentValueRef.current) {
+      return;
+    }
+    if (!binaryBytes && hexByteSource?.kind !== 'file') {
+      return;
+    }
+
+    setRtonIndexBuilding(true);
+    updateStatus(t('status.largeRtonIndexing'), 'warn');
+    const indexedFileSource = hexByteSource?.kind === 'file' ? hexByteSource : null;
+    const decodePromise = binaryBytes
+      ? runRtonDecodeInWorker(new Uint8Array(binaryBytes), { includeValue: false, retainDocument: true, includeBytes: false })
+      : runRtonDecodeFileInWorker(indexedFileSource!.file, { includeValue: false, retainDocument: true, includeBytes: false });
+    void decodePromise
+      .then(({ document, stats, plainBytes, compact, encrypted }) => {
+        if (!document) {
+          throw new Error(t('status.largeRtonIndexFailed'));
         }
-      }
-    },
-    [activeTabId, restoreEditorTab, snapshotActiveTab],
-  );
+        if (plainBytes) {
+          setSourceBytes(plainBytes);
+          setBinaryBytes(plainBytes);
+          setHexByteSource(null);
+          setBinaryEncoding({ compact, encrypted: false });
+        } else if (indexedFileSource) {
+          setSourceBytes(null);
+          setBinaryBytes(null);
+          setHexByteSource({
+            ...indexedFileSource,
+            binaryEncoding: { compact, encrypted },
+          });
+          setBinaryEncoding({ compact, encrypted });
+        } else {
+          setBinaryEncoding({ compact, encrypted: false });
+        }
+        setRtonDocument(document);
+        setStats(stats);
+        setSurfaceNote(t('format.largeDocumentMode'));
+        setSearchState({ kind: 'idle' });
+        setStatus({ message: t('status.largeRtonIndexed'), tone: 'ok' });
+      })
+      .catch((error: unknown) => {
+        const message = `${t('status.largeRtonIndexFailed')}: ${errorMessage(error)}`;
+        setSurfaceNote(t('format.largeDocumentIndexFailed'));
+        setSearchState({ kind: 'message', message });
+        setStatus({ message, tone: 'error' });
+      })
+      .finally(() => setRtonIndexBuilding(false));
+  }, [
+    activeTabId,
+    binaryBytes,
+    currentValueRef,
+    hexByteSource,
+    rtonDocument,
+    runRtonDecodeInWorker,
+    runRtonDecodeFileInWorker,
+    setBinaryBytes,
+    setBinaryEncoding,
+    setHexByteSource,
+    setRtonDocument,
+    setSearchState,
+    setSourceBytes,
+    setStats,
+    setStatus,
+    setSurfaceNote,
+    t,
+    updateStatus,
+  ]);
 
   const closeEditorTab = useCallback(
     (tabId: number) => {
@@ -416,12 +512,29 @@ export function useRtonEditorController() {
     [compactOutput, encryptOutput],
   );
   const displayedHexBytes = binaryBytes;
+  const displayedHexSource = useMemo<HexByteSource | null>(() => {
+    if (binaryBytes) {
+      return null;
+    }
+
+    if (rtonDocument) {
+      return {
+        kind: 'document',
+        documentId: rtonDocument.id,
+        byteLength: rtonDocument.byteLength,
+        binaryEncoding: { compact: binaryEncoding?.compact ?? false, encrypted: false },
+      };
+    }
+
+    return hexByteSource;
+  }, [binaryBytes, binaryEncoding, hexByteSource, rtonDocument]);
   const outputText = buildOutputText({
     binaryBytes,
     binaryEncoding,
     editorSurface,
     editorText,
     hasActiveFile,
+    hexByteSource: displayedHexSource,
     lastOutputBytes,
     surfaceNote,
     targetBinaryEncoding,
@@ -430,8 +543,8 @@ export function useRtonEditorController() {
   });
   const displaySurfaceNote =
     editorSurface === 'hex'
-      ? binaryBytes
-        ? `RTON · ${formatBytes(binaryBytes.byteLength)}`
+      ? binaryBytes || displayedHexSource
+        ? `RTON · ${formatBytes(binaryBytes?.byteLength ?? displayedHexSource?.byteLength ?? 0)}`
         : t('app.rtonUnavailable')
       : surfaceNote;
 
@@ -457,6 +570,7 @@ export function useRtonEditorController() {
     fileName,
     lang,
     loadedFiles,
+    hexByteSource: displayedHexSource,
     sourceBytes,
     tabs,
     t,
@@ -476,6 +590,7 @@ export function useRtonEditorController() {
     binaryEncoding,
     compactOutput,
     currentValueRef,
+    hexByteSource,
     rtonDocument,
     editorSurface,
     encryptOutput,
@@ -491,9 +606,13 @@ export function useRtonEditorController() {
     updateStatus,
     viewModeRef,
     wasmReady,
+    exportRtonDocumentBytes,
+    exportRtonDocumentSize,
     exportRtonDocumentText,
+    runBatchExportInWorker,
     runByteTransformInWorker,
     runByteTransformSizeInWorker,
+    runTextExportInWorker,
   });
 
   useEffect(() => {
@@ -552,6 +671,7 @@ export function useRtonEditorController() {
     }
 
     setBinaryBytes(null);
+    setHexByteSource(null);
     setBinaryEncoding(null);
     setRtonDocument(null);
     setEditorTextState(value);
@@ -567,6 +687,7 @@ export function useRtonEditorController() {
     clearPendingWork,
     compactOutput,
     currentValueRef,
+    hexByteSource,
     rtonDocument,
     invalidateFormatWork,
     parseError,
@@ -575,6 +696,7 @@ export function useRtonEditorController() {
     setBinaryEncoding,
     setCurrentValueState,
     setEditorSurface,
+    setHexByteSource,
     setLastOutputBytes,
     setParseError,
     setParsedJson,
@@ -628,11 +750,11 @@ export function useRtonEditorController() {
     openEditorTabs,
     previewPreference,
     renderTextForValue,
-    runRtonDecodeInWorker,
+    runTextParseInWorker,
+    runRtonDecodeFileInWorker,
     setLoadedFiles,
     tabs,
     t,
-    updateEditorTab,
     updateStatus,
     viewModeRef,
     wasmReady,
@@ -667,15 +789,80 @@ export function useRtonEditorController() {
     viewModeRef,
   });
 
+  const applyRemoteRtonDocumentUpdate = useCallback(
+    ({ document, stats, compact }: RtonDocumentValueUpdateOutput) => {
+      setRtonDocument(document);
+      setStats(stats);
+      setBinaryBytes(null);
+      setSourceBytes(null);
+      setHexByteSource(null);
+      setBinaryEncoding({ compact, encrypted: false });
+      setParsedJson(null);
+      setParseError(null);
+      setLastOutputBytes(null);
+      setSearchState({ kind: 'idle' });
+      setSurfaceNote(t('format.largeDocumentMode'));
+      setStatus({ message: t('status.rtonValueUpdated'), tone: 'ok' });
+    },
+    [
+      setBinaryBytes,
+      setBinaryEncoding,
+      setHexByteSource,
+      setLastOutputBytes,
+      setParseError,
+      setParsedJson,
+      setRtonDocument,
+      setSearchState,
+      setSourceBytes,
+      setStats,
+      setStatus,
+      setSurfaceNote,
+      t,
+    ],
+  );
+
+  const updateInspectorValueNode = useCallback(
+    (path: Parameters<typeof updateRtonValueNode>[0], nextValue: Parameters<typeof updateRtonValueNode>[1]) => {
+      if (!rtonDocument || currentValueRef.current) {
+        updateRtonValueNode(path, nextValue);
+        return;
+      }
+
+      void updateRtonDocumentValue(rtonDocument.id, path, nextValue)
+        .then(applyRemoteRtonDocumentUpdate)
+        .catch((error: unknown) => {
+          updateStatus(errorMessage(error), 'error');
+        });
+    },
+    [
+      applyRemoteRtonDocumentUpdate,
+      currentValueRef,
+      rtonDocument,
+      updateRtonDocumentValue,
+      updateRtonValueNode,
+      updateStatus,
+    ],
+  );
+
+  const editInspectorDocumentNode = useCallback(
+    (operation: RtonDocumentEditOperation) => {
+      if (!rtonDocument || currentValueRef.current) {
+        return;
+      }
+
+      void editRtonDocument(rtonDocument.id, operation)
+        .then(applyRemoteRtonDocumentUpdate)
+        .catch((error: unknown) => {
+          updateStatus(errorMessage(error), 'error');
+        });
+    },
+    [applyRemoteRtonDocumentUpdate, currentValueRef, editRtonDocument, rtonDocument, updateStatus],
+  );
+
   const navigateInspectorNode = useCallback(
     (path: Parameters<typeof navigateToRtonValueNode>[0]) => {
       if (!rtonDocument || currentValueRef.current) {
         navigateToRtonValueNode(path);
-        return;
-      }
-
-      if (!binaryBytes) {
-        updateStatus(t('status.noJumpBytes'), 'warn');
         return;
       }
 
@@ -698,7 +885,6 @@ export function useRtonEditorController() {
         });
     },
     [
-      binaryBytes,
       currentValueRef,
       locateRtonDocumentOffset,
       navigateToRtonValueNode,
@@ -744,9 +930,12 @@ export function useRtonEditorController() {
   const inputText = hasActiveFile
     ? sourceBytes
       ? formatBytes(sourceBytes.byteLength)
-      : t('app.textInput')
+      : displayedHexSource
+        ? formatBytes(displayedHexSource.byteLength)
+        : t('app.textInput')
     : t('app.noOutput');
-  const canOpenHexEditor = hasActiveFile && Boolean(binaryBytes || currentValue || rtonDocument);
+  const canOpenHexEditor = hasActiveFile && Boolean(binaryBytes || hexByteSource || currentValue || rtonDocument);
+  const canBuildRtonIndex = hasActiveFile && Boolean((binaryBytes || hexByteSource?.kind === 'file') && binaryEncoding && !currentValue && !rtonDocument);
 
   const onCompactOutputChange = useCallback(
     (checked: boolean) => {
@@ -770,6 +959,7 @@ export function useRtonEditorController() {
 
   const onBatchExportSelectedFiles = useCallback(
     (mode: BatchExportMode) => {
+      batchExportModeRef.current = mode;
       void batchExportSelectedFiles(mode);
     },
     [batchExportSelectedFiles],
@@ -780,6 +970,18 @@ export function useRtonEditorController() {
       updateStatus(message, 'error');
     },
     [updateStatus],
+  );
+
+  const onReadHexRange = useCallback(
+    async (source: HexByteSource, start: number, end: number) => {
+      if (source.kind === 'document') {
+        const result = await getRtonDocumentByteRange(source.documentId, start, end);
+        return result.bytes;
+      }
+
+      return readHexByteSourceRange(source, start, end);
+    },
+    [getRtonDocumentByteRange],
   );
 
   const onWorkspaceDragOver = useCallback((event: DragEvent<HTMLElement>) => {
@@ -813,12 +1015,14 @@ export function useRtonEditorController() {
   return {
     activeTabId,
     binaryBytes,
+    canBuildRtonIndex,
     canOpenHexEditor,
     compactOutput,
     currentValue,
     displayFileName,
     displaySurfaceNote,
     displayedHexBytes,
+    displayedHexSource,
     dragging,
     editorJumpTarget,
     editorSearchPanelVisible,
@@ -841,6 +1045,7 @@ export function useRtonEditorController() {
     outputText,
     rightPanelWidth,
     rtonDocument,
+    rtonIndexBuilding,
     searchQuery,
     searchState,
     selectedFileCount,
@@ -858,6 +1063,7 @@ export function useRtonEditorController() {
     workspaceStyle,
     onActivateTab: activateEditorTab,
     onBatchExportSelectedFiles,
+    onBuildRtonIndex: buildRtonIndex,
     onClearFileSearch,
     onClearSelectedFiles: clearSelectedFiles,
     onCloseTab: closeEditorTab,
@@ -880,9 +1086,11 @@ export function useRtonEditorController() {
     onOpenFiles: loadRtonFiles,
     onOpenFolder: loadRtonFolder,
     onOpenHexEditor: openPreferredHexEditor,
+    onReadHexRange,
     onResizePanel: resizePanel,
     onRtonValueNavigate: navigateInspectorNode,
-    onRtonValueUpdate: updateRtonValueNode,
+    onRtonDocumentEdit: editInspectorDocumentNode,
+    onRtonValueUpdate: updateInspectorValueNode,
     onSearchChange: setSearchQuery,
     onSelectAllListedFiles: selectAllListedFiles,
     onThemePreferenceChange: setThemePreference,
